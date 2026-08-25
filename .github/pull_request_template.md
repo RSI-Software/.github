@@ -1,25 +1,27 @@
-<!-- State what changed and why in one line. -->
+<!-- One line: the product or workflow result and why. No implementation diary. -->
+
+## Evidence
+
+<!-- Delete if no CLI, TUI, UX, or UI changed.
+CLI: captured output. TUI/UI: real images. Motion or interaction: short video. -->
+
+### Before
+
+<!-- Capture. -->
+
+### After
+
+<!-- Capture. -->
 
 ## Tasks
 
-- [ ] <!-- Reviewable task. -->
-
-## UI changes
-
-<!-- Delete if not applicable. Add before/after images; use a short video for motion or interaction. -->
-
-| Before | After |
-| --- | --- |
-| <!-- image --> | <!-- image --> |
+- [ ] <!-- One reviewable task; duplicate as needed. -->
 
 ## Close conditions
 
-- [ ] Linked issue close conditions are met
-- [ ] Required checks pass
-- [ ] Docs reflect the change
-- [ ] Before/after images cover UI changes
-- [ ] A video covers motion or interaction changes
+- [ ] <!-- One operator-observable result; duplicate as needed. -->
 
+<!-- Use Closes for a complete outcome; Part-of for a slice. -->
 Closes #<!-- issue number -->
 
 @<!-- operating human -->
