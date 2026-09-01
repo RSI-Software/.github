@@ -1,0 +1,118 @@
+name: Idea 💡
+description: Capture a possibility that needs evidence or a decision before commitment.
+title: "<possibility to explore> [📥]"
+type: Idea 💡
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Preserve the question without pretending it is committed work
+
+        Use an Idea when the direction still needs evidence or a decision. If
+        the outcome is already understood, choose Feature or Task instead.
+        Replace `<possibility to explore>` and keep the `[📥]` suffix.
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How soon should the organization decide or investigate this?
+      options:
+        - Urgent
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: dropdown
+    id: domain
+    attributes:
+      label: Domain
+      description: Choose the single domain that best owns the decision.
+      options:
+        - ci
+        - tests
+        - ui
+        - dx
+        - estate
+        - docs
+        - release
+        - perf
+        - security
+    validations:
+      required: true
+
+  - type: textarea
+    id: possibility
+    attributes:
+      label: Possibility
+      description: What might change, and for whom?
+      placeholder: We could... so that...
+    validations:
+      required: true
+
+  - type: textarea
+    id: signal
+    attributes:
+      label: Signal
+      description: What observation, pain, or opportunity makes this worth considering?
+      placeholder: We observed... This may matter because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision_condition
+    attributes:
+      label: Decision condition
+      description: What evidence or answer would let this issue close, promote, or stop?
+      placeholder: |
+        - [ ] We know whether...
+        - [ ] We can compare...
+        - [ ] The next disposition is recorded.
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and alternatives
+      description: What could make this a poor direction? What simpler option exists?
+      placeholder: Risks... Alternatives...
+
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Relationship
+      description: Declare how this idea relates to other issues.
+      options:
+        - No relationship
+        - Blocked by another issue
+        - Blocks another issue
+        - Related to another issue
+    validations:
+      required: true
+
+  - type: input
+    id: relationship_target
+    attributes:
+      label: Relationship target
+      description: Required unless you chose “No relationship”. Use OWNER/REPO#123.
+      placeholder: RSI-Software/repository#123
+
+  - type: input
+    id: parent
+    attributes:
+      label: Suggested parent
+      description: Optional. A maintainer will verify the native parent edge.
+      placeholder: RSI-Software/repository#123
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues for this possibility.
+          required: true
+        - label: I have not presented an undecided direction as committed work.
+          required: true

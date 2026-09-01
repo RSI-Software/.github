@@ -1,0 +1,117 @@
+name: Task 🔨
+description: Propose one bounded, independently closable piece of work.
+title: "<what needs doing> [📥]"
+type: Task 🔨
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## A small, finishable outcome
+
+        Keep this to one piece of work with a result someone can verify. Replace
+        `<what needs doing>` in the title and keep the `[📥]` suffix: new human
+        filings enter the triage inbox before they are homed.
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How soon does this need attention? This is required by taxonomy v6.
+      options:
+        - Urgent
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: dropdown
+    id: domain
+    attributes:
+      label: Domain
+      description: Choose the single domain that best owns the outcome.
+      options:
+        - ci
+        - tests
+        - ui
+        - dx
+        - estate
+        - docs
+        - release
+        - perf
+        - security
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What should be true when this task is complete?
+      placeholder: An operator can...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What is happening now, and why is the task needed?
+      placeholder: Today... This matters because...
+    validations:
+      required: true
+
+  - type: textarea
+    id: close_condition
+    attributes:
+      label: Close condition
+      description: List observable checks, not implementation steps.
+      placeholder: |
+        - [ ] The operator can...
+        - [ ] The relevant check proves...
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries
+      description: What is deliberately outside this task?
+      placeholder: This does not include...
+
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Relationship
+      description: Declare how this work relates to other issues.
+      options:
+        - No relationship
+        - Blocked by another issue
+        - Blocks another issue
+        - Related to another issue
+    validations:
+      required: true
+
+  - type: input
+    id: relationship_target
+    attributes:
+      label: Relationship target
+      description: Required unless you chose “No relationship”. Use OWNER/REPO#123.
+      placeholder: RSI-Software/repository#123
+
+  - type: input
+    id: parent
+    attributes:
+      label: Suggested parent
+      description: Optional. A maintainer will verify the native parent edge.
+      placeholder: RSI-Software/repository#123
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues for an existing outcome.
+          required: true
+        - label: This issue can close independently from any suggested parent.
+          required: true
