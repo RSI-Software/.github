@@ -1,0 +1,124 @@
+name: Feature ✨
+description: Define a new user-visible product or workflow capability.
+title: "<new capability> [📥]"
+type: Feature ✨
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Describe the capability, not its implementation
+
+        Show the workflow that is missing and the observable result that should
+        become possible. Replace `<new capability>` in the title and keep the
+        `[📥]` suffix while the issue awaits homing.
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How soon does this capability need to exist?
+      options:
+        - Urgent
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: dropdown
+    id: domain
+    attributes:
+      label: Domain
+      description: Choose the single domain that best owns the capability.
+      options:
+        - ci
+        - tests
+        - ui
+        - dx
+        - estate
+        - docs
+        - release
+        - perf
+        - security
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Desired workflow
+      description: Who does what, and what becomes possible?
+      placeholder: As a... I can... so that...
+    validations:
+      required: true
+
+  - type: textarea
+    id: gap
+    attributes:
+      label: Current gap
+      description: What happens today, and why is it insufficient?
+      placeholder: Today... This prevents...
+    validations:
+      required: true
+
+  - type: textarea
+    id: close_condition
+    attributes:
+      label: Close condition
+      description: List observable outcomes that prove the capability exists.
+      placeholder: |
+        - [ ] A user can...
+        - [ ] The workflow preserves...
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and non-goals
+      description: Name compatibility, safety, or scope boundaries that must survive.
+      placeholder: Must preserve... Does not include...
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or examples
+      description: Add a real screenshot, recording, reference, or comparable workflow when useful.
+      placeholder: Paste or drag supporting material here.
+
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Relationship
+      description: Declare how this capability relates to other issues.
+      options:
+        - No relationship
+        - Blocked by another issue
+        - Blocks another issue
+        - Related to another issue
+    validations:
+      required: true
+
+  - type: input
+    id: relationship_target
+    attributes:
+      label: Relationship target
+      description: Required unless you chose “No relationship”. Use OWNER/REPO#123.
+      placeholder: RSI-Software/repository#123
+
+  - type: input
+    id: parent
+    attributes:
+      label: Suggested parent
+      description: Optional. A maintainer will verify the native parent edge.
+      placeholder: RSI-Software/repository#123
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues for this capability.
+          required: true
+        - label: This feature has one independently verifiable outcome.
+          required: true

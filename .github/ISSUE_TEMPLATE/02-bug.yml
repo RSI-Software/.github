@@ -1,0 +1,151 @@
+name: Bug 🐛
+description: Report reproducible broken behavior, a regression, or a reliability failure.
+title: "<what broke> [📥]"
+type: Bug 🐛
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Make the failure reproducible
+
+        One report should describe one broken behavior. Replace `<what broke>`
+        in the title and keep the `[📥]` suffix. Drag screenshots, recordings,
+        or files into any text area, and remove secrets before submitting.
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Judge the operational urgency, not the difficulty of the fix.
+      options:
+        - Urgent
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: dropdown
+    id: domain
+    attributes:
+      label: Domain
+      description: Choose the single domain that best owns the failure.
+      options:
+        - ci
+        - tests
+        - ui
+        - dx
+        - estate
+        - docs
+        - release
+        - perf
+        - security
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What did you do, and what visible result was wrong?
+      placeholder: When I... the system...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Give the shortest deterministic sequence you know.
+      placeholder: |
+        1. Start from...
+        2. Run or open...
+        3. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+      placeholder: The system should...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add the smallest useful log excerpt, trace, screenshot, or recording. Redact secrets and home paths.
+      placeholder: Paste or drag supporting evidence here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include versions and surfaces that can affect reproduction.
+      value: |
+        - OS:
+        - App or browser:
+        - Version or commit:
+        - Provider or runtime:
+    validations:
+      required: true
+
+  - type: input
+    id: regression
+    attributes:
+      label: Last known good version
+      description: Optional. Name the last release or commit where this worked.
+      placeholder: v1.2.3 or abc1234
+
+  - type: textarea
+    id: close_condition
+    attributes:
+      label: Close condition
+      description: State the restored behavior and the evidence that will prove it.
+      placeholder: |
+        - [ ] The reproduction no longer fails.
+        - [ ] A regression check covers the failure.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Relationship
+      description: Declare how this failure relates to other issues.
+      options:
+        - No relationship
+        - Blocked by another issue
+        - Blocks another issue
+        - Related to another issue
+    validations:
+      required: true
+
+  - type: input
+    id: relationship_target
+    attributes:
+      label: Relationship target
+      description: Required unless you chose “No relationship”. Use OWNER/REPO#123.
+      placeholder: RSI-Software/repository#123
+
+  - type: input
+    id: parent
+    attributes:
+      label: Suggested parent
+      description: Optional. A maintainer will verify the native parent edge.
+      placeholder: RSI-Software/repository#123
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues and did not find this failure.
+          required: true
+        - label: I removed credentials, tokens, private URLs, and personal paths.
+          required: true
