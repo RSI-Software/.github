@@ -1,6 +1,5 @@
 name: Idea 💡
 description: Capture a possibility that needs evidence or a decision before commitment.
-title: "<possibility to explore> [📥]"
 type: Idea 💡
 body:
   - type: markdown
@@ -9,39 +8,8 @@ body:
         ## Preserve the question without pretending it is committed work
 
         Use an Idea when the direction still needs evidence or a decision. If
-        the outcome is already understood, choose Feature or Task instead.
-        Replace `<possibility to explore>` and keep the `[📥]` suffix.
-
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      description: How soon should the organization decide or investigate this?
-      options:
-        - Urgent
-        - High
-        - Medium
-        - Low
-    validations:
-      required: true
-
-  - type: dropdown
-    id: domain
-    attributes:
-      label: Domain
-      description: Choose the single domain that best owns the decision.
-      options:
-        - ci
-        - tests
-        - ui
-        - dx
-        - estate
-        - docs
-        - release
-        - perf
-        - security
-    validations:
-      required: true
+        the outcome is understood, choose Feature or Task. Keep the title to the
+        possibility itself, without type, status, domain, or homing markers.
 
   - type: textarea
     id: possibility
@@ -64,7 +32,7 @@ body:
   - type: textarea
     id: decision_condition
     attributes:
-      label: Decision condition
+      label: Decision conditions
       description: What evidence or answer would let this issue close, promote, or stop?
       placeholder: |
         - [ ] We know whether...
@@ -80,39 +48,61 @@ body:
       description: What could make this a poor direction? What simpler option exists?
       placeholder: Risks... Alternatives...
 
-  - type: dropdown
-    id: relationship
+  - type: markdown
     attributes:
-      label: Relationship
-      description: Declare how this idea relates to other issues.
+      value: |
+        ## Classify it in GitHub
+
+        Before creating the issue, use the native controls below the form.
+        Metadata in those controls is authoritative; these checks only record
+        that you made the filing decision.
+
+  - type: checkboxes
+    id: domain_gate
+    attributes:
+      label: Domain
+      description: Use the native Label picker. Repository-local labels may supplement, but do not replace, a governed domain label.
       options:
-        - No relationship
-        - Blocked by another issue
-        - Blocks another issue
-        - Related to another issue
+        - label: I applied at least one applicable governed domain label.
+          required: true
+
+  - type: checkboxes
+    id: priority_gate
+    attributes:
+      label: Priority
+      description: Use the native Priority issue field. Priority is human judgment and automation will not infer it.
+      options:
+        - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
+          required: true
+
+  - type: dropdown
+    id: project_intent
+    attributes:
+      label: Project
+      description: Project membership is explicit. Use the native Project picker when selecting the second option.
+      options:
+        - No project
+        - Added to the appropriate project
     validations:
       required: true
 
-  - type: input
-    id: relationship_target
+  - type: markdown
     attributes:
-      label: Relationship target
-      description: Required unless you chose “No relationship”. Use OWNER/REPO#123.
-      placeholder: RSI-Software/repository#123
+      value: |
+        ### What happens next
 
-  - type: input
-    id: parent
-    attributes:
-      label: Suggested parent
-      description: Optional. A maintainer will verify the native parent edge.
-      placeholder: RSI-Software/repository#123
+        A new human filing enters **Untriaged 📥**. Automation records filing
+        provenance and initializes existing governed Project membership. Later
+        triage owns parentage, relationships, Standalone, Slice, and homing.
 
   - type: checkboxes
-    id: checks
+    id: filing_gate
     attributes:
-      label: Before submitting
+      label: Filing check
       options:
         - label: I searched open and closed issues for this possibility.
+          required: true
+        - label: The title describes only the possibility, without taxonomy or status markers.
           required: true
         - label: I have not presented an undecided direction as committed work.
           required: true

@@ -1,6 +1,5 @@
 name: Bug 🐛
 description: Report reproducible broken behavior, a regression, or a reliability failure.
-title: "<what broke> [📥]"
 type: Bug 🐛
 body:
   - type: markdown
@@ -8,40 +7,9 @@ body:
       value: |
         ## Make the failure reproducible
 
-        One report should describe one broken behavior. Replace `<what broke>`
-        in the title and keep the `[📥]` suffix. Drag screenshots, recordings,
-        or files into any text area, and remove secrets before submitting.
-
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      description: Judge the operational urgency, not the difficulty of the fix.
-      options:
-        - Urgent
-        - High
-        - Medium
-        - Low
-    validations:
-      required: true
-
-  - type: dropdown
-    id: domain
-    attributes:
-      label: Domain
-      description: Choose the single domain that best owns the failure.
-      options:
-        - ci
-        - tests
-        - ui
-        - dx
-        - estate
-        - docs
-        - release
-        - perf
-        - security
-    validations:
-      required: true
+        Report one broken behavior. Keep the title to what broke, without type,
+        status, domain, or homing markers. Add the smallest useful evidence and
+        remove secrets before submitting.
 
   - type: textarea
     id: observed
@@ -68,7 +36,7 @@ body:
     id: expected
     attributes:
       label: Expected behavior
-      description: What should have happened instead?
+      description: What should happen instead?
       placeholder: The system should...
     validations:
       required: true
@@ -77,7 +45,7 @@ body:
     id: evidence
     attributes:
       label: Evidence
-      description: Add the smallest useful log excerpt, trace, screenshot, or recording. Redact secrets and home paths.
+      description: Add a focused log excerpt, trace, screenshot, or recording. Redact secrets and personal paths.
       placeholder: Paste or drag supporting evidence here.
     validations:
       required: true
@@ -105,7 +73,7 @@ body:
   - type: textarea
     id: close_condition
     attributes:
-      label: Close condition
+      label: Close conditions
       description: State the restored behavior and the evidence that will prove it.
       placeholder: |
         - [ ] The reproduction no longer fails.
@@ -113,39 +81,61 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: relationship
+  - type: markdown
     attributes:
-      label: Relationship
-      description: Declare how this failure relates to other issues.
+      value: |
+        ## Classify it in GitHub
+
+        Before creating the issue, use the native controls below the form.
+        Metadata in those controls is authoritative; these checks only record
+        that you made the filing decision.
+
+  - type: checkboxes
+    id: domain_gate
+    attributes:
+      label: Domain
+      description: Use the native Label picker. Repository-local labels may supplement, but do not replace, a governed domain label.
       options:
-        - No relationship
-        - Blocked by another issue
-        - Blocks another issue
-        - Related to another issue
+        - label: I applied at least one applicable governed domain label.
+          required: true
+
+  - type: checkboxes
+    id: priority_gate
+    attributes:
+      label: Priority
+      description: Use the native Priority issue field. Judge operational urgency, not fix difficulty.
+      options:
+        - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
+          required: true
+
+  - type: dropdown
+    id: project_intent
+    attributes:
+      label: Project
+      description: Project membership is explicit. Use the native Project picker when selecting the second option.
+      options:
+        - No project
+        - Added to the appropriate project
     validations:
       required: true
 
-  - type: input
-    id: relationship_target
+  - type: markdown
     attributes:
-      label: Relationship target
-      description: Required unless you chose “No relationship”. Use OWNER/REPO#123.
-      placeholder: RSI-Software/repository#123
+      value: |
+        ### What happens next
 
-  - type: input
-    id: parent
-    attributes:
-      label: Suggested parent
-      description: Optional. A maintainer will verify the native parent edge.
-      placeholder: RSI-Software/repository#123
+        A new human filing enters **Untriaged 📥**. Automation records filing
+        provenance and initializes existing governed Project membership. Later
+        triage owns parentage, relationships, Standalone, Slice, and homing.
 
   - type: checkboxes
-    id: checks
+    id: filing_gate
     attributes:
-      label: Before submitting
+      label: Filing check
       options:
         - label: I searched open and closed issues and did not find this failure.
+          required: true
+        - label: The title describes only the failure, without taxonomy or status markers.
           required: true
         - label: I removed credentials, tokens, private URLs, and personal paths.
           required: true

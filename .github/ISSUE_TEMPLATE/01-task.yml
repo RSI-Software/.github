@@ -1,47 +1,14 @@
 name: Task 🔨
-description: Propose one bounded, independently closable piece of work.
-title: "<what needs doing> [📥]"
+description: Define one bounded, independently closable outcome.
 type: Task 🔨
 body:
   - type: markdown
     attributes:
       value: |
-        ## A small, finishable outcome
+        ## Make one finishable promise
 
-        Keep this to one piece of work with a result someone can verify. Replace
-        `<what needs doing>` in the title and keep the `[📥]` suffix: new human
-        filings enter the triage inbox before they are homed.
-
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      description: How soon does this need attention? This is required by taxonomy v6.
-      options:
-        - Urgent
-        - High
-        - Medium
-        - Low
-    validations:
-      required: true
-
-  - type: dropdown
-    id: domain
-    attributes:
-      label: Domain
-      description: Choose the single domain that best owns the outcome.
-      options:
-        - ci
-        - tests
-        - ui
-        - dx
-        - estate
-        - docs
-        - release
-        - perf
-        - security
-    validations:
-      required: true
+        Describe the result, not a proposed implementation. Keep the title to
+        the work itself. Do not add type, status, domain, or homing markers.
 
   - type: textarea
     id: outcome
@@ -56,7 +23,7 @@ body:
     id: context
     attributes:
       label: Context
-      description: What is happening now, and why is the task needed?
+      description: What happens now, and why is this task needed?
       placeholder: Today... This matters because...
     validations:
       required: true
@@ -64,7 +31,7 @@ body:
   - type: textarea
     id: close_condition
     attributes:
-      label: Close condition
+      label: Close conditions
       description: List observable checks, not implementation steps.
       placeholder: |
         - [ ] The operator can...
@@ -79,39 +46,61 @@ body:
       description: What is deliberately outside this task?
       placeholder: This does not include...
 
-  - type: dropdown
-    id: relationship
+  - type: markdown
     attributes:
-      label: Relationship
-      description: Declare how this work relates to other issues.
+      value: |
+        ## Classify it in GitHub
+
+        Before creating the issue, use the native controls below the form.
+        Metadata in those controls is authoritative; these checks only record
+        that you made the filing decision.
+
+  - type: checkboxes
+    id: domain_gate
+    attributes:
+      label: Domain
+      description: Use the native Label picker. Repository-local labels may supplement, but do not replace, a governed domain label.
       options:
-        - No relationship
-        - Blocked by another issue
-        - Blocks another issue
-        - Related to another issue
+        - label: I applied at least one applicable governed domain label.
+          required: true
+
+  - type: checkboxes
+    id: priority_gate
+    attributes:
+      label: Priority
+      description: Use the native Priority issue field. Priority is human judgment and automation will not infer it.
+      options:
+        - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
+          required: true
+
+  - type: dropdown
+    id: project_intent
+    attributes:
+      label: Project
+      description: Project membership is explicit. Use the native Project picker when selecting the second option.
+      options:
+        - No project
+        - Added to the appropriate project
     validations:
       required: true
 
-  - type: input
-    id: relationship_target
+  - type: markdown
     attributes:
-      label: Relationship target
-      description: Required unless you chose “No relationship”. Use OWNER/REPO#123.
-      placeholder: RSI-Software/repository#123
+      value: |
+        ### What happens next
 
-  - type: input
-    id: parent
-    attributes:
-      label: Suggested parent
-      description: Optional. A maintainer will verify the native parent edge.
-      placeholder: RSI-Software/repository#123
+        A new human filing enters **Untriaged 📥**. Automation records filing
+        provenance and initializes existing governed Project membership. Later
+        triage owns parentage, relationships, Standalone, Slice, and homing.
 
   - type: checkboxes
-    id: checks
+    id: filing_gate
     attributes:
-      label: Before submitting
+      label: Filing check
       options:
-        - label: I searched open and closed issues for an existing outcome.
+        - label: I searched open and closed issues for the same outcome.
           required: true
-        - label: This issue can close independently from any suggested parent.
+        - label: The title describes only the work, without taxonomy or status markers.
+          required: true
+        - label: Another person has enough evidence to triage this issue.
           required: true
