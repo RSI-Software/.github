@@ -81,17 +81,6 @@ body:
         - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
           required: true
 
-  - type: dropdown
-    id: project_intent
-    attributes:
-      label: Project
-      description: Project membership is explicit. Use the native Project picker when selecting the second option.
-      options:
-        - No project
-        - Added to the appropriate project
-    validations:
-      required: true
-
   - type: markdown
     attributes:
       value: |
