@@ -1,27 +1,33 @@
-<!-- One line: the product or workflow result and why. No implementation diary. -->
+<!-- 1-2 sentences, story-like.
+1. Before: what we do now ("Do X, then Y, land at Z").
+2. Problem: why that fails.
+3. After: what we do instead, tied to 2. -->
 
 ## Evidence
 
-<!-- Delete if no CLI, TUI, UX, or UI changed.
-CLI: captured output. TUI/UI: real images. Motion or interaction: short video. -->
+<!-- Required, images beat text.
+CLI: output, `sh` fence for one-liners, otherwise images
+UI/TUI: real image. Motion: short video.
+Agents: `ghb image` on PATH. -->
 
 ### Before
 
-<!-- Capture. -->
+<!-- Show now plus flaw.
+A, single: caption plus shot. ex: "CTA, misaligned".
+B, flow video: "Do X, then Y, land at Z" plus clip.
+C, flow shots: one caption plus shot per step. -->
 
 ### After
 
-<!-- Capture. -->
+<!-- Mirror Before shots, fixed. -->
 
 ## Tasks
 
-- [ ] <!-- One reviewable task; duplicate as needed. -->
+- [ ] <!-- One reviewable task. -->
 
 ## Close conditions
 
-- [ ] <!-- One operator-observable result; duplicate as needed. -->
+- [ ] <!-- One observable result. -->
 
-<!-- Use Closes for a complete outcome; Part-of for a slice. -->
-Closes #<!-- issue number -->
-
-@<!-- operating human -->
+<!-- Closes: full fix. Refs: partial. Part-of: parent slice. -->
+Closes #
