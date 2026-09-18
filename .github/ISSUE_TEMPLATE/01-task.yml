@@ -10,6 +10,8 @@ body:
         Describe the result, not a proposed implementation. Keep the title to
         the work itself. Do not add type, status, domain, or homing markers.
 
+        Agents file via `ghb issue create`, never this form.
+
   - type: textarea
     id: outcome
     attributes:
@@ -25,8 +27,6 @@ body:
       label: Context
       description: What happens now, and why is this task needed?
       placeholder: Today... This matters because...
-    validations:
-      required: true
 
   - type: textarea
     id: close_condition
@@ -36,8 +36,6 @@ body:
       placeholder: |
         - [ ] The operator can...
         - [ ] The relevant check proves...
-    validations:
-      required: true
 
   - type: textarea
     id: boundaries
@@ -62,7 +60,6 @@ body:
       description: Use the native Label picker. Repository-local labels may supplement, but do not replace, a governed domain label.
       options:
         - label: I applied at least one applicable governed domain label.
-          required: true
 
   - type: checkboxes
     id: priority_gate
@@ -71,7 +68,6 @@ body:
       description: Use the native Priority issue field. Priority is human judgment and automation will not infer it.
       options:
         - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
-          required: true
 
   - type: markdown
     attributes:
@@ -88,8 +84,5 @@ body:
       label: Filing check
       options:
         - label: I searched open and closed issues for the same outcome.
-          required: true
         - label: The title describes only the work, without taxonomy or status markers.
-          required: true
         - label: Another person has enough evidence to triage this issue.
-          required: true

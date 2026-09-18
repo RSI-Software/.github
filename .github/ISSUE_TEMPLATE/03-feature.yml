@@ -11,6 +11,8 @@ body:
         possible. Keep the title to the capability itself, without type, status,
         domain, or homing markers.
 
+        Agents file via `ghb issue create`, never this form.
+
   - type: textarea
     id: workflow
     attributes:
@@ -26,8 +28,6 @@ body:
       label: Current gap
       description: What happens today, and why is it insufficient?
       placeholder: Today... This prevents...
-    validations:
-      required: true
 
   - type: textarea
     id: close_condition
@@ -37,8 +37,6 @@ body:
       placeholder: |
         - [ ] A user can...
         - [ ] The workflow preserves...
-    validations:
-      required: true
 
   - type: textarea
     id: constraints
@@ -70,7 +68,6 @@ body:
       description: Use the native Label picker. Repository-local labels may supplement, but do not replace, a governed domain label.
       options:
         - label: I applied at least one applicable governed domain label.
-          required: true
 
   - type: checkboxes
     id: priority_gate
@@ -79,7 +76,6 @@ body:
       description: Use the native Priority issue field. Priority is human judgment and automation will not infer it.
       options:
         - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
-          required: true
 
   - type: markdown
     attributes:
@@ -96,8 +92,5 @@ body:
       label: Filing check
       options:
         - label: I searched open and closed issues for this capability.
-          required: true
         - label: The title describes only the capability, without taxonomy or status markers.
-          required: true
         - label: This feature has one independently verifiable outcome.
-          required: true

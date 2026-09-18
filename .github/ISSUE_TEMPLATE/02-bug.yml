@@ -11,6 +11,8 @@ body:
         status, domain, or homing markers. Add the smallest useful evidence and
         remove secrets before submitting.
 
+        Agents file via `ghb issue create`, never this form.
+
   - type: textarea
     id: observed
     attributes:
@@ -29,8 +31,6 @@ body:
         1. Start from...
         2. Run or open...
         3. Observe...
-    validations:
-      required: true
 
   - type: textarea
     id: expected
@@ -38,8 +38,6 @@ body:
       label: Expected behavior
       description: What should happen instead?
       placeholder: The system should...
-    validations:
-      required: true
 
   - type: textarea
     id: evidence
@@ -47,8 +45,6 @@ body:
       label: Evidence
       description: Add a focused log excerpt, trace, screenshot, or recording. Redact secrets and personal paths.
       placeholder: Paste or drag supporting evidence here.
-    validations:
-      required: true
 
   - type: textarea
     id: environment
@@ -60,8 +56,6 @@ body:
         - App or browser:
         - Version or commit:
         - Provider or runtime:
-    validations:
-      required: true
 
   - type: input
     id: regression
@@ -78,8 +72,6 @@ body:
       placeholder: |
         - [ ] The reproduction no longer fails.
         - [ ] A regression check covers the failure.
-    validations:
-      required: true
 
   - type: markdown
     attributes:
@@ -97,7 +89,6 @@ body:
       description: Use the native Label picker. Repository-local labels may supplement, but do not replace, a governed domain label.
       options:
         - label: I applied at least one applicable governed domain label.
-          required: true
 
   - type: checkboxes
     id: priority_gate
@@ -106,7 +97,6 @@ body:
       description: Use the native Priority issue field. Judge operational urgency, not fix difficulty.
       options:
         - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
-          required: true
 
   - type: markdown
     attributes:
@@ -123,8 +113,5 @@ body:
       label: Filing check
       options:
         - label: I searched open and closed issues and did not find this failure.
-          required: true
         - label: The title describes only the failure, without taxonomy or status markers.
-          required: true
         - label: I removed credentials, tokens, private URLs, and personal paths.
-          required: true

@@ -11,6 +11,8 @@ body:
         the outcome is understood, choose Feature or Task. Keep the title to the
         possibility itself, without type, status, domain, or homing markers.
 
+        Agents file via `ghb issue create`, never this form.
+
   - type: textarea
     id: possibility
     attributes:
@@ -26,8 +28,6 @@ body:
       label: Signal
       description: What observation, pain, or opportunity makes this worth considering?
       placeholder: We observed... This may matter because...
-    validations:
-      required: true
 
   - type: textarea
     id: decision_condition
@@ -38,8 +38,6 @@ body:
         - [ ] We know whether...
         - [ ] We can compare...
         - [ ] The next disposition is recorded.
-    validations:
-      required: true
 
   - type: textarea
     id: risks
@@ -64,7 +62,6 @@ body:
       description: Use the native Label picker. Repository-local labels may supplement, but do not replace, a governed domain label.
       options:
         - label: I applied at least one applicable governed domain label.
-          required: true
 
   - type: checkboxes
     id: priority_gate
@@ -73,7 +70,6 @@ body:
       description: Use the native Priority issue field. Priority is human judgment and automation will not infer it.
       options:
         - label: I set Priority, or intentionally left it blank because I cannot honestly judge it yet.
-          required: true
 
   - type: markdown
     attributes:
@@ -90,8 +86,5 @@ body:
       label: Filing check
       options:
         - label: I searched open and closed issues for this possibility.
-          required: true
         - label: The title describes only the possibility, without taxonomy or status markers.
-          required: true
         - label: I have not presented an undecided direction as committed work.
-          required: true
