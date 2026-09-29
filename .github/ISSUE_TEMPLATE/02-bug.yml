@@ -40,6 +40,12 @@ body:
       placeholder: The system should...
 
   - type: textarea
+    id: suspected_cause
+    attributes:
+      label: Suspected cause and fix
+      description: One line. Put `path:line` citations in a collapsed Evidence block, or write Unverified.
+
+  - type: textarea
     id: evidence
     attributes:
       label: Evidence
@@ -68,7 +74,7 @@ body:
     id: close_condition
     attributes:
       label: Close conditions
-      description: State the restored behavior and the evidence that will prove it.
+      description: Observable restored behavior only; no implementation steps.
       placeholder: |
         - [ ] The reproduction no longer fails.
         - [ ] A regression check covers the failure.
