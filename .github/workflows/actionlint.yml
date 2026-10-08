@@ -1,5 +1,6 @@
-# Lints the caller's GitHub Actions workflows with a pinned, checksum-verified
-# actionlint. Callers grant `contents: read`; see docs/actionlint.md.
+# Lints the caller's GitHub Actions workflows with pinned, checksum-verified
+# actionlint and shellcheck. Runs on the caller's RSI_CI_RUNNER, so private
+# repos bill no hosted minutes. Callers grant `contents: read`; see docs/actionlint.md.
 name: actionlint
 
 on:
@@ -9,7 +10,7 @@ permissions: {}
 
 jobs:
   actionlint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -17,16 +18,23 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install actionlint
+      - name: Install actionlint and shellcheck
         env:
-          VERSION: 1.7.12
-          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          SHELLCHECK: 0.11.0
+          SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
         run: |
           set -euo pipefail
-          tarball="actionlint_${VERSION}_linux_amd64.tar.gz"
-          curl -fsSLo "$RUNNER_TEMP/$tarball" "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/$tarball"
-          echo "$SHA256  $RUNNER_TEMP/$tarball" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" actionlint
+          cd "$RUNNER_TEMP"
+          a="actionlint_${ACTIONLINT}_linux_amd64.tar.gz"
+          s="shellcheck-v${SHELLCHECK}.linux.x86_64.tar.gz"
+          curl -fsSLo "$a" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT}/$a"
+          curl -fsSLo "$s" "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK}/$s"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$a" "$SHELLCHECK_SHA256" "$s" | sha256sum -c -
+          mkdir -p bin
+          tar -xzf "$a" -C bin actionlint
+          tar -xzf "$s" -C bin --strip-components 1 "shellcheck-v${SHELLCHECK}/shellcheck"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Lint workflows
-        run: |
-          "$RUNNER_TEMP/actionlint" -color
+        run: actionlint -color

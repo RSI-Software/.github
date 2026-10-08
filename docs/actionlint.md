@@ -5,8 +5,8 @@
 ## Rules
 
 - **Pin:** v1.7.12, sha256-verified
-- **shellcheck:** runs on each `run:` script
-- **Runner:** GitHub-hosted `ubuntu-latest`
+- **shellcheck:** v0.11.0, on each `run:` script
+- **Runner:** `RSI_CI_RUNNER`, else `ubuntu-latest`
 - **Scope:** `.github/workflows/` of the caller
 
 ## Caller
@@ -24,7 +24,7 @@ jobs:
 ## Self-hosted labels
 
 actionlint refuses unknown runner labels.
-List the ARC scale sets in `.github/actionlint.yaml`:
+List the repository's own labels in `.github/actionlint.yaml`:
 
 ```yaml
 self-hosted-runner:
