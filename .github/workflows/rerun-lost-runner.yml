@@ -1,7 +1,6 @@
-# Reruns a failed run's failed jobs when every one of them lost its self-hosted runner:
-# an evicted, OOM-killed or drained runner pod, not a failing test. Capped at 3 attempts.
-# Callers grant `actions: write` and `checks: read`, and call it only for failed runs;
-# see docs/rerun-lost-runner.md.
+# Reruns each failed job that lost its self-hosted runner: an evicted, OOM-killed or
+# drained runner pod, not a failing test. A real failure keeps the run red. Capped at
+# 3 attempts. Callers grant `actions: write` and `checks: read`; see docs/rerun-lost-runner.md.
 name: Rerun lost runners
 
 on:
@@ -18,28 +17,54 @@ jobs:
       actions: write
       checks: read
     steps:
-      - name: Rerun failed jobs that lost their runner
+      - name: Rerun jobs that lost their runner
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN: ${{ github.event.workflow_run.id }}
           ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
           DRY_RUN: "false"
         run: |
           set -euo pipefail
           lost='lost communication with the server|received a shutdown signal'
-          mapfile -t failed < <(gh api --paginate "repos/$REPO/actions/runs/$RUN/attempts/$ATTEMPT/jobs" \
-            --jq '.jobs[] | select(.conclusion == "failure") | "\(.id) \(.name)"')
-          if (( ${#failed[@]} == 0 )); then
-            echo "No failed job in attempt $ATTEMPT; nothing to rerun."
+          note() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+
+          # A job carried over from an earlier attempt keeps its first start time, so
+          # each failed job is judged by the attempt that last ran it.
+          declare -A ran_id
+          for (( a = 1; a <= ATTEMPT; a++ )); do
+            since=$(gh api "repos/$REPO/actions/runs/$RUN/attempts/$a" --jq .run_started_at)
+            while IFS=$'\t' read -r id name; do ran_id[$name]=$id
+            done < <(gh api --paginate "repos/$REPO/actions/runs/$RUN/attempts/$a/jobs" \
+              --jq ".jobs[] | select(.started_at >= \"$since\") | [.id, .name] | @tsv")
+          done
+
+          lost_jobs=() real=0
+          while IFS=$'\t' read -r id name; do
+            if gh api "repos/$REPO/check-runs/${ran_id[$name]:-$id}/annotations" --jq '.[].message' | grep -Eq "$lost"; then
+              lost_jobs+=("$id"$'\t'"$name")
+            else
+              real=$((real + 1))
+            fi
+          done < <(gh api --paginate "repos/$REPO/actions/runs/$RUN/attempts/$ATTEMPT/jobs" \
+            --jq '.jobs[] | select(.conclusion == "failure") | [.id, .name] | @tsv')
+
+          note "### Rerun lost runners: [run $RUN]($RUN_URL), attempt $ATTEMPT"
+          if (( ${#lost_jobs[@]} == 0 )); then
+            note "No job lost its runner; $real failed on its own. Nothing to rerun."
             exit 0
           fi
-          for job in "${failed[@]}"; do
-            if ! gh api "repos/$REPO/check-runs/${job%% *}/annotations" --jq '.[].message' | grep -Eq "$lost"; then
-              echo "Job '${job#* }' failed on its own; leaving run $RUN for a human."
-              exit 0
-            fi
-            echo "Job '${job#* }' lost its runner."
-          done
-          echo "Every failed job lost its runner: rerunning attempt $((ATTEMPT + 1)) of run $RUN."
-          [[ "$DRY_RUN" == true ]] || gh run rerun "$RUN" --failed --repo "$REPO"
+          for job in "${lost_jobs[@]}"; do note "- lost its runner: ${job#*$'\t'}"; done
+
+          if (( real == 0 )); then
+            note "Rerunning all ${#lost_jobs[@]} lost jobs as attempt $((ATTEMPT + 1))."
+            [[ "$DRY_RUN" == true ]] || gh run rerun "$RUN" --failed --repo "$REPO"
+            exit 0
+          fi
+          # GitHub reruns one job per request and refuses while the run is active, so a
+          # mixed run reruns one lost job per attempt; the run stays red on the real one.
+          job=${lost_jobs[0]}
+          note "$real job(s) failed on their own; the run stays red."
+          note "Rerunning '${job#*$'\t'}' as attempt $((ATTEMPT + 1)); any other lost job follows next attempt."
+          [[ "$DRY_RUN" == true ]] || gh api -X POST "repos/$REPO/actions/jobs/${job%%$'\t'*}/rerun" --silent
