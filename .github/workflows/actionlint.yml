@@ -37,4 +37,7 @@ jobs:
           tar -xzf "$s" -C bin --strip-components 1 "shellcheck-v${SHELLCHECK}/shellcheck"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Lint workflows
+        env:
+          # SC2016 flags every intentionally single-quoted jq, awk or node script.
+          SHELLCHECK_OPTS: --exclude=SC2016
         run: actionlint -color

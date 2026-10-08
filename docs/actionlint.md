@@ -6,6 +6,7 @@
 
 - **Pin:** v1.7.12, sha256-verified
 - **shellcheck:** v0.11.0, on each `run:` script
+- **SC2016:** off; single quotes are intended
 - **Runner:** `RSI_CI_RUNNER`, else `ubuntu-latest`
 - **Scope:** `.github/workflows/` of the caller
 
