@@ -118,6 +118,8 @@ jobs:
             # /proc/sys writes, so the build survives a hardened systemd unit.
             # The Dockerfile is repo-controlled, which is the trust boundary here.
             sudo /usr/bin/buildah bud --isolation=chroot "${build_args[@]}" -f "$DOCKERFILE" -t "$image" "$CONTEXT"
+            tar="$RUNNER_TEMP/k3s-deploy-$(printf '%s' "$image" | tr '/:' '--').tar"
+            sudo /usr/bin/buildah push "$image" "docker-archive:$tar"
           done <<<"$IMPORT_IMAGES"
 
       - name: Import the images into k3s
