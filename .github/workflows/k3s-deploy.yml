@@ -114,7 +114,10 @@ jobs:
           while IFS= read -r image; do
             if [[ -z "$image" ]]; then continue; fi
             echo "Building $image"
-            sudo /usr/bin/buildah bud "${build_args[@]}" -f "$DOCKERFILE" -t "$image" "$CONTEXT"
+            # chroot isolation: RUN steps need no kernel namespaces, cgroups or
+            # /proc/sys writes, so the build survives a hardened systemd unit.
+            # The Dockerfile is repo-controlled, which is the trust boundary here.
+            sudo /usr/bin/buildah bud --isolation=chroot "${build_args[@]}" -f "$DOCKERFILE" -t "$image" "$CONTEXT"
           done <<<"$IMPORT_IMAGES"
 
       - name: Import the images into k3s
