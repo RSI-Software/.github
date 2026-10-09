@@ -61,6 +61,11 @@ on:
         required: false
         type: string
         default: 10m
+      timeout-minutes:
+        description: Job timeout; raise it when a pod drains for long on shutdown
+        required: false
+        type: number
+        default: 30
 
 permissions:
   contents: read
@@ -68,7 +73,7 @@ permissions:
 jobs:
   deploy:
     runs-on: [self-hosted, "${{ inputs.runner }}"]
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     # One deploy at a time per Deployment, across branches and reruns.
     concurrency:
       group: k3s-deploy-${{ inputs.namespace }}-${{ inputs.deployment }}
