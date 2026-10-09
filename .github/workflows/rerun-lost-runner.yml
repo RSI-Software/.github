@@ -42,7 +42,11 @@ jobs:
 
           lost_jobs=() real=0
           while IFS=$'\t' read -r id name; do
-            if gh api "repos/$REPO/check-runs/${ran_id[$name]:-$id}/annotations" --jq '.[].message' | grep -Eq "$lost"; then
+            messages=$(gh api "repos/$REPO/check-runs/${ran_id[$name]:-$id}/annotations" --jq '.[].message')
+            # A drained pod cancels its job mid-step; a job timeout cancels it too, but says so.
+            if grep -Eq "$lost" <<< "$messages" ||
+              { grep -qx 'The operation was canceled.' <<< "$messages" &&
+                ! grep -q 'exceeded the maximum execution time' <<< "$messages"; }; then
               lost_jobs+=("$id"$'\t'"$name")
             else
               real=$((real + 1))
