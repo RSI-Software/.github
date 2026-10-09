@@ -1,44 +1,49 @@
 # Rerun lost runners
 
-`rerun-lost-runner.yml` reruns each failed job that lost its self-hosted runner.
-An evicted, OOM-killed or drained runner pod is lost; a failing test is not.
+`rerun-lost-runner.yml` reruns each job that lost its self-hosted runner or timed out.
+An evicted, drained or hard-killed runner pod is lost; a failing test is not.
 
 ## Rules
 
-### Lost
+### Retried
 
-- **Gone:** "lost communication with the server"
-- **Shutdown:** "received a shutdown signal"
-- **Drained:** "canceled", without a timeout
+| Signal | Job ends | Annotation |
+| --- | --- | --- |
+| **Gone** | `failure` | "lost communication with the server" |
+| **Shutdown** | `failure` | "received a shutdown signal" |
+| **Drained** | `failure` | "The operation was canceled." |
+| **Timeout** | `cancelled` | "exceeded the maximum execution time" |
+
+### Not retried
+
+- **Real failure:** the run stays red
+- **Deliberate cancel:** a user or newer run
+- **Fail-fast sibling:** reruns with its run
 
 ### Rerun
 
-- **Per job:** only lost jobs rerun
-- **Real failure:** never rerun; the run stays red
-- **Cap:** attempt 3 is the last
+- **Cap:** 3 runs per job
+- **Delay:** 30 seconds before each rerun
 - **Summary:** each decision, in the step summary
 
 ### Mixed runs
 
 GitHub reruns one job per request, only once the run finishes.
 
-1. All failed jobs lost: one `--failed` rerun
-2. Lost beside real: one lost job per attempt
+1. Failed run, all lost: one `--failed` rerun
+2. Otherwise: one lost job per attempt
 3. Carried-over job: judged where it last ran
+
+`--failed` would also rerun a deliberate cancel.
 
 ## Why
 
-- **Pressure kills:** CI yields to services
-- **Not the change's fault:** so a rerun is safe
-- **OOM counts as lost:** the annotation can't tell
-- **Cap:** a job that always OOMs stops at 3
-- **Runner:** GitHub-hosted; skips bill nothing
+- **Pressure kills:** CI yields; a rerun is safe
+- **Timeout:** a hung test or a hard-killed pod
+- **OOM:** no filter; judged by its signal
+- **Cap:** an always-lost job stops at 3
+- **Runner:** GitHub-hosted, a minute per call
 - **Real failures:** a rerun never hides them
-
-### Gap
-
-A runner killed without grace times out instead.
-That run ends `cancelled` and is not rerun.
 
 ## Caller
 
