@@ -1,33 +1,35 @@
-<!-- 1-2 sentences, story-like.
-1. Before: what we do now ("Do X, then Y, land at Z").
-2. Problem: why that fails.
-3. After: what we do instead, tied to 2. -->
+<!-- 1-2 sentences: what changed and why. -->
 
 ## Evidence
 
-<!-- Required, images beat text.
-CLI: output, `sh` fence for one-liners, otherwise images
-UI/TUI: real image. Motion: short video.
-Agents: `ghb image` on PATH. -->
+<!-- Visible inline, never in details. Source links/prose/check results are not evidence.
+Code-only: focused fenced code/diff. UI/CLI/TUI behavior: recording first; screenshot when video adds little.
+One app: window. Multiple apps: monitor. Upload with ghb image PATH...
+Changes: matched Before/After, or one comparison clip/diff.
+Additions: show the new thing directly; no Before/After labels.
+Missing media: flag to user and in body; open the PR anyway.
+Code-change model:
+```diff
+- retries: 0
++ retries: 3
+```
+Addition model:
+```ts
+export const retries = 3;
+```
+UI model: click Save; draft disappears / same action; draft survives. -->
 
-### Before
+## Verification
 
-<!-- Show now plus flaw.
-A, single: caption plus shot. ex: "CTA, misaligned".
-B, flow video: "Do X, then Y, land at Z" plus clip.
-C, flow shots: one caption plus shot per step. -->
-
-### After
-
-<!-- Mirror Before shots, fixed. -->
+<!-- Text checkboxes: commands/results and untested limits, never an evidence table. -->
 
 ## Tasks
 
-- [ ] <!-- One reviewable task. -->
+- [ ] **Task:** <!-- One reviewable task. -->
 
 ## Close conditions
 
-- [ ] <!-- One observable result. -->
+- [ ] **Condition:** <!-- One observable result. -->
 
 <!-- Closes: full fix. Refs: partial. Part-of: parent slice. -->
 Closes #
