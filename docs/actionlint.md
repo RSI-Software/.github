@@ -12,15 +12,30 @@
 
 ## Caller
 
-Add one job to the repository's CI workflow:
+Each repository calls it from its own file, never a job in `ci.yml`.
+
+- **Path:** `.github/workflows/actionlint.yml`
+- **Trigger:** workflow file changes only
+- **Required check:** never
+- **Branch:** the repository's default
 
 ```yaml
+name: actionlint
+on:
+  pull_request:
+    paths: [.github/workflows/**, .github/actionlint.yaml]
+  push:
+    branches: [main]
+    paths: [.github/workflows/**, .github/actionlint.yaml]
+permissions: {}
 jobs:
   actionlint:
     uses: RSI-Software/.github/.github/workflows/actionlint.yml@main
     permissions:
       contents: read
 ```
+
+This repository holds the reusable at that path, so its `ci.yml` is the caller.
 
 ## Self-hosted labels
 
