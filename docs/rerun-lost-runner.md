@@ -5,8 +5,14 @@ An evicted, OOM-killed or drained runner pod is lost; a failing test is not.
 
 ## Rules
 
-- **Lost:** "lost communication with the server"
-- **Also lost:** "received a shutdown signal"
+### Lost
+
+- **Gone:** "lost communication with the server"
+- **Shutdown:** "received a shutdown signal"
+- **Drained:** "canceled", without a timeout
+
+### Rerun
+
 - **Per job:** only lost jobs rerun
 - **Real failure:** never rerun; the run stays red
 - **Cap:** attempt 3 is the last
@@ -28,6 +34,11 @@ GitHub reruns one job per request, only once the run finishes.
 - **Cap:** a job that always OOMs stops at 3
 - **Runner:** GitHub-hosted; skips bill nothing
 - **Real failures:** a rerun never hides them
+
+### Gap
+
+A runner killed without grace times out instead.
+That run ends `cancelled` and is not rerun.
 
 ## Caller
 
