@@ -1,21 +1,23 @@
-# Builds the caller's commit on the app's own node runner, imports the image
-# into that node's k3s containerd, sets the Deployment image, watches the
-# rollout, verifies the running pod, and rolls back on any failure. The decided
-# cluster-app route: no registry, no Argo CD (ops docs/decisions.md, "Cluster
-# apps deploy from a runner on their node").
+# The one release route for k3s apps (infra docs/decisions.md, "Every k3s app
+# ships from main by one release route"): on the app's own node runner it
+# builds the caller's commit, imports the images into that node's containerd,
+# renders and applies the app's manifests with the images pinned to the commit,
+# runs their Jobs first, watches every rollout, smokes /health for the commit,
+# and rolls back on any failure. No registry, no Argo CD.
 #
-# Runner-host contract (ops managed/obsidian-k3s-worker holds the reference
+# Runner-host contract (infra managed/obsidian-k3s-worker holds the reference
 # install):
 # - `buildah` and `jq` installed; the runner user's sudoers grants exactly
 #   `/usr/bin/buildah bud`, `/usr/bin/buildah push docker-archive:*`,
 #   `/usr/local/bin/k3s ctr -n k8s.io images import *` and
 #   `/usr/local/bin/k3s ctr -n k8s.io images ls -q`.
 # - `k3s kubectl` on PATH: every k3s node ships it.
-# - a namespace-scoped deployer ServiceAccount's kubeconfig on disk, named by
-#   the `kubeconfig` input (pattern: the promptletariat pull deployer grants).
+# - the app's deployer ServiceAccount kubeconfig on disk, named by the
+#   `kubeconfig` input; its Role covers every object the manifests hold.
 #
-# The build tags every image with the full commit SHA, so a tag names its
-# commit and re-deploying a SHA is idempotent.
+# Images import on the runner's node only, so every pod template that runs a
+# built image must pin `kubernetes.io/hostname` to that node; the render step
+# refuses one that does not.
 name: k3s deploy
 
 on:
@@ -26,38 +28,43 @@ on:
         required: true
         type: string
       namespace:
-        description: Namespace of the Deployment
+        description: Default namespace for objects that name none, and for `deployments`
         required: true
         type: string
-      deployment:
-        description: Deployment name
+      images:
+        description: >-
+          JSON array of images to build, e.g.
+          [{"repository": "docker.io/library/render-api", "dockerfile": "deploy/Dockerfile", "context": ".", "build-args": "COMMIT=..."}].
+          Tag is the full commit SHA unless "tag" is set; a set tag already in the node's containerd is not rebuilt.
         required: true
         type: string
-      containers:
-        description: 'JSON object mapping container name to image repository, e.g. {"api": "docker.io/library/render-api"}; every image is tagged with the full commit SHA'
-        required: true
-        type: string
-      dockerfile:
-        description: Dockerfile path, relative to the checkout
-        required: false
-        type: string
-        default: Dockerfile
-      context:
-        description: Build context path, relative to the checkout
-        required: false
-        type: string
-        default: .
-      build-args:
-        description: Newline-separated Docker build args (NAME=value)
+      manifests:
+        description: >-
+          Shell command, run in the checkout, that writes the app's manifests into $K3S_DEPLOY_OUT
+          ($K3S_DEPLOY_SHA and $K3S_DEPLOY_NODE are set). Every image of a built repository is pinned
+          to the commit; Jobs run to completion first, then the rest applies server-side.
         required: false
         type: string
         default: ""
+      deployments:
+        description: 'JSON array of Deployment names to set images on, when there is no `manifests` command, e.g. ["render-server"]'
+        required: false
+        type: string
+        default: "[]"
+      health:
+        description: >-
+          JSON array of smokes curled from the runner, e.g.
+          [{"url": "http://127.0.0.1:30882/api/health", "commit": ".commit"}];
+          "commit" is a jq filter on the body that must yield this commit (12+ hex chars, prefix match).
+        required: false
+        type: string
+        default: "[]"
       kubeconfig:
         description: Absolute path on the runner host of the deployer kubeconfig
         required: true
         type: string
       rollout-timeout:
-        description: Timeout for kubectl rollout status
+        description: Timeout for each Job and each rollout status
         required: false
         type: string
         default: 10m
@@ -74,12 +81,16 @@ jobs:
   deploy:
     runs-on: [self-hosted, "${{ inputs.runner }}"]
     timeout-minutes: ${{ inputs.timeout-minutes }}
-    # One deploy at a time per Deployment, across branches and reruns.
+    # One deploy at a time per app, across branches and reruns.
     concurrency:
-      group: k3s-deploy-${{ inputs.namespace }}-${{ inputs.deployment }}
+      group: k3s-deploy-${{ github.repository }}
       cancel-in-progress: false
     permissions:
       contents: read
+    env:
+      KUBECONFIG: ${{ inputs.kubeconfig }}
+      NAMESPACE: ${{ inputs.namespace }}
+      SHA: ${{ github.sha }}
     steps:
       - name: Check out the commit under deploy
         uses: actions/checkout@v5
@@ -88,111 +99,248 @@ jobs:
 
       - name: Resolve the images
         env:
-          CONTAINERS: ${{ inputs.containers }}
-          SHA: ${{ github.sha }}
+          IMAGES: ${{ inputs.images }}
+          DEPLOYMENTS: ${{ inputs.deployments }}
+          HEALTH: ${{ inputs.health }}
+          MANIFESTS: ${{ inputs.manifests }}
         run: |
           set -euo pipefail
-          jq -e 'type == "object" and length > 0 and all(.[]; type == "string" and length > 0)' \
-            <<<"$CONTAINERS" >/dev/null \
-            || { echo "containers must be a non-empty JSON object of container name => image repository" >&2; exit 2; }
-          {
-            echo "SET_IMAGE_ARGS<<K3S_DEPLOY_EOF"
-            jq -r --arg sha "$SHA" 'to_entries[] | "\(.key)=\(.value):\($sha)"' <<<"$CONTAINERS"
-            echo K3S_DEPLOY_EOF
-            echo "IMPORT_IMAGES<<K3S_DEPLOY_EOF"
-            jq -r --arg sha "$SHA" 'to_entries | map(.value + ":\($sha)") | unique | .[]' <<<"$CONTAINERS"
-            echo K3S_DEPLOY_EOF
-          } >> "$GITHUB_ENV"
-          echo "IMAGE_JSON=$(jq -c --arg sha "$SHA" '[to_entries[].value + ":" + $sha] | unique' <<<"$CONTAINERS")" >> "$GITHUB_ENV"
+          jq -e 'type == "array" and length > 0 and all(.[];
+              (.repository | type == "string" and length > 0 and (test(":") | not))
+              and ((.tag // "x") | type == "string" and length > 0))' <<<"$IMAGES" >/dev/null \
+            || { echo "images must be a non-empty array of {repository, dockerfile?, context?, build-args?, tag?}; repository carries no tag" >&2; exit 2; }
+          jq -e 'type == "array" and all(.[]; type == "string")' <<<"$DEPLOYMENTS" >/dev/null \
+            || { echo "deployments must be a JSON array of names" >&2; exit 2; }
+          jq -e 'type == "array" and all(.[]; (.url | type == "string") and (.commit | type == "string"))' <<<"$HEALTH" >/dev/null \
+            || { echo "health must be a JSON array of {url, commit}" >&2; exit 2; }
+          if [[ -z "$MANIFESTS" && "$DEPLOYMENTS" == "[]" ]]; then
+            echo "set manifests or deployments: nothing would roll out" >&2; exit 2
+          fi
+          jq -c --arg sha "$SHA" 'map(. + {ref: "\(.repository):\(.tag // $sha)", pinned: (.tag == null)})' \
+            <<<"$IMAGES" > "$RUNNER_TEMP/k3s-images.json"
+          # Repositories whose every reference this deploy pins to the commit.
+          jq -c '[.[] | select(.pinned) | .repository] | unique' "$RUNNER_TEMP/k3s-images.json" > "$RUNNER_TEMP/k3s-pinned.json"
+          echo "NODE=$(hostname -s)" >> "$GITHUB_ENV"
 
       - name: Build the images
-        env:
-          CONTEXT: ${{ inputs.context }}
-          DOCKERFILE: ${{ inputs.dockerfile }}
-          BUILD_ARGS: ${{ inputs.build-args }}
         run: |
           set -euo pipefail
-          build_args=()
-          while IFS= read -r pair; do
-            if [[ -n "$pair" ]]; then build_args+=(--build-arg "$pair"); fi
-          done <<<"$BUILD_ARGS"
-          while IFS= read -r image; do
-            if [[ -z "$image" ]]; then continue; fi
-            echo "Building $image"
+          present=$(sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q)
+          : > "$RUNNER_TEMP/k3s-import.txt"
+          while IFS= read -r img; do
+            ref=$(jq -r .ref <<<"$img")
+            if [[ $(jq -r .pinned <<<"$img") == false ]] && grep -Fxq "$ref" <<<"$present"; then
+              echo "$ref already on the node; not rebuilt"
+              continue
+            fi
+            build_args=()
+            while IFS= read -r pair; do
+              if [[ -n "$pair" ]]; then build_args+=(--build-arg "$pair"); fi
+            done < <(jq -r '.["build-args"] // ""' <<<"$img")
+            echo "Building $ref"
             # chroot isolation: RUN steps need no kernel namespaces, cgroups or
             # /proc/sys writes, so the build survives a hardened systemd unit.
             # The Dockerfile is repo-controlled, which is the trust boundary here.
-            sudo /usr/bin/buildah bud --isolation=chroot "${build_args[@]}" -f "$DOCKERFILE" -t "$image" "$CONTEXT"
-            tar="$RUNNER_TEMP/k3s-deploy-$(printf '%s' "$image" | tr '/:' '--').tar"
-            sudo /usr/bin/buildah push "$image" "docker-archive:$tar"
-          done <<<"$IMPORT_IMAGES"
+            sudo /usr/bin/buildah bud --isolation=chroot "${build_args[@]}" \
+              -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
+            tar="$RUNNER_TEMP/k3s-deploy-$(printf '%s' "$ref" | tr '/:' '--').tar"
+            sudo /usr/bin/buildah push "$ref" "docker-archive:$tar"
+            echo "$ref" >> "$RUNNER_TEMP/k3s-import.txt"
+          done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-images.json")
 
       - name: Import the images into k3s
         run: |
           set -euo pipefail
-          while IFS= read -r image; do
-            if [[ -z "$image" ]]; then continue; fi
-            tar="$RUNNER_TEMP/k3s-deploy-$(printf '%s' "$image" | tr '/:' '--').tar"
+          while IFS= read -r ref; do
+            tar="$RUNNER_TEMP/k3s-deploy-$(printf '%s' "$ref" | tr '/:' '--').tar"
             sudo /usr/local/bin/k3s ctr -n k8s.io images import "$tar"
-            if ! sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q | grep -Fxq "$image"; then
-              echo "$image missing from the node's containerd after import" >&2
+            if ! sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q | grep -Fxq "$ref"; then
+              echo "$ref missing from the node's containerd after import" >&2
               exit 1
             fi
             rm -f "$tar"
-          done <<<"$IMPORT_IMAGES"
+          done < "$RUNNER_TEMP/k3s-import.txt"
 
-      # Past this point the Deployment has been mutated: every later failure
-      # rolls back. Failures before it leave the Deployment untouched.
-      - name: Set the Deployment image
-        id: set-image
+      - name: Render the manifests
+        if: inputs.manifests != ''
         env:
-          NAMESPACE: ${{ inputs.namespace }}
-          DEPLOYMENT: ${{ inputs.deployment }}
+          MANIFESTS: ${{ inputs.manifests }}
         run: |
           set -euo pipefail
-          mapfile -t args <<<"$SET_IMAGE_ARGS"
-          k3s kubectl --kubeconfig="${{ inputs.kubeconfig }}" -n "$NAMESPACE" \
-            set image "deployment/$DEPLOYMENT" "${args[@]}"
+          out="$RUNNER_TEMP/k3s-manifests"
+          rm -rf "$out" && mkdir -p "$out"
+          K3S_DEPLOY_OUT="$out" K3S_DEPLOY_SHA="$SHA" K3S_DEPLOY_NODE="$NODE" bash -euo pipefail -c "$MANIFESTS"
+          find "$out" -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) | grep -q . \
+            || { echo "the manifests command wrote no manifests into \$K3S_DEPLOY_OUT" >&2; exit 1; }
+          k3s kubectl create --dry-run=client -o json -R -f "$out" \
+            | jq -cs '[.[] | if .kind == "List" then .items[] else . end]' > "$RUNNER_TEMP/k3s-raw.json"
+          jq -c --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" --arg sha "$SHA" '
+            def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
+            walk(if type == "object" and (.image | type) == "string"
+                 then (.image | repo) as $r | if any($pinned[0][]; . == $r) then .image = "\($r):\($sha)" else . end
+                 else . end)' \
+            "$RUNNER_TEMP/k3s-raw.json" > "$RUNNER_TEMP/k3s-all.json"
+          # Built images live on this node only: a pod template that runs one
+          # elsewhere would never start.
+          stray=$(jq -r --slurpfile images "$RUNNER_TEMP/k3s-images.json" --arg node "$NODE" '
+            .[] | . as $o
+            | (if .kind == "Pod" then .spec else .spec.template.spec // .spec.jobTemplate.spec.template.spec // empty end) as $pod
+            | select(any(($pod.containers + ($pod.initContainers // []))[]; . as $c | any($images[0][]; .ref == $c.image or (.pinned and ($c.image | startswith(.repository + ":"))))))
+            | select(($pod.nodeSelector["kubernetes.io/hostname"] // "") != $node)
+            | "\($o.kind)/\($o.metadata.name)"' "$RUNNER_TEMP/k3s-all.json")
+          if [[ -n "$stray" ]]; then
+            echo "images import on $NODE only; pin kubernetes.io/hostname: $NODE on:" >&2
+            echo "$stray" >&2
+            exit 1
+          fi
+          jq -c 'map(select(.kind == "Job"))' "$RUNNER_TEMP/k3s-all.json" > "$RUNNER_TEMP/k3s-jobs.json"
+          jq -c '{apiVersion: "v1", kind: "List", items: map(select(.kind != "Job"))}' "$RUNNER_TEMP/k3s-all.json" > "$RUNNER_TEMP/k3s-apply.json"
+          jq -r '.[] | "\(.kind)/\(.metadata.name)"' "$RUNNER_TEMP/k3s-all.json"
+          # The server validates every object, admission and RBAC included,
+          # before anything changes.
+          k3s kubectl -n "$NAMESPACE" apply --server-side --force-conflicts --field-manager=k3s-deploy \
+            --dry-run=server -f "$RUNNER_TEMP/k3s-apply.json" >/dev/null
 
-      - name: Watch the rollout
+      - name: Record the Deployments
         env:
-          NAMESPACE: ${{ inputs.namespace }}
-          DEPLOYMENT: ${{ inputs.deployment }}
-        run: |
-          k3s kubectl --kubeconfig="${{ inputs.kubeconfig }}" -n "$NAMESPACE" \
-            rollout status "deployment/$DEPLOYMENT" --timeout=${{ inputs.rollout-timeout }}
-
-      - name: Verify the running pod
-        env:
-          NAMESPACE: ${{ inputs.namespace }}
-          DEPLOYMENT: ${{ inputs.deployment }}
+          DEPLOYMENTS: ${{ inputs.deployments }}
+          HAS_MANIFESTS: ${{ inputs.manifests != '' }}
         run: |
           set -euo pipefail
-          selector=$(k3s kubectl --kubeconfig="${{ inputs.kubeconfig }}" -n "$NAMESPACE" \
-            get deployment "$DEPLOYMENT" -o jsonpath='{.spec.selector.matchLabels}' \
-            | jq -er 'to_entries | map("\(.key)=\(.value)") | join(",")')
-          # Every pod of the Deployment is Running and ready, and every
-          # container runs one of the images this deploy built.
-          k3s kubectl --kubeconfig="${{ inputs.kubeconfig }}" -n "$NAMESPACE" \
-            get pods -l "$selector" -o json \
-            | jq -e --argjson images "$IMAGE_JSON" '
-                (.items | length) > 0
-                and all(.items[]; . as $pod |
-                  $pod.status.phase == "Running"
-                  and (($pod.spec.containers | length) > 0)
-                  and all($pod.spec.containers[]; . as $c | any($images[]; . == $c.image))
-                  and (($pod.status.containerStatuses // []) | length == ($pod.spec.containers | length))
-                  and all($pod.status.containerStatuses[]; . as $s |
-                    $s.ready == true and any($images[]; . == $s.image))
-                )' \
-            || { echo "the running pods do not serve $IMAGE_JSON" >&2; exit 1; }
+          if [[ "$HAS_MANIFESTS" == true ]]; then
+            jq -r --arg ns "$NAMESPACE" '.items[] | select(.kind == "Deployment") | "\(.metadata.namespace // $ns) \(.metadata.name)"' \
+              "$RUNNER_TEMP/k3s-apply.json"
+          else
+            jq -r --arg ns "$NAMESPACE" '.[] | "\($ns) \(.)"' <<<"$DEPLOYMENTS"
+          fi > "$RUNNER_TEMP/k3s-deployments.txt"
+          # The revision before this deploy: rollback undoes only what moved.
+          : > "$RUNNER_TEMP/k3s-revisions.txt"
+          while read -r ns name; do
+            rev=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found \
+              -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
+            echo "$ns $name ${rev:-none}" >> "$RUNNER_TEMP/k3s-revisions.txt"
+          done < "$RUNNER_TEMP/k3s-deployments.txt"
+          cat "$RUNNER_TEMP/k3s-revisions.txt"
+
+      # Jobs (migrations) finish before any Deployment changes; a failed Job
+      # stops the deploy with the running pods untouched.
+      - name: Run the Jobs
+        if: inputs.manifests != ''
+        env:
+          TIMEOUT: ${{ inputs.rollout-timeout }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r job; do
+            ns=$(jq -r --arg ns "$NAMESPACE" '.metadata.namespace // $ns' <<<"$job")
+            name=$(jq -r .metadata.name <<<"$job")
+            echo "Running Job $ns/$name"
+            k3s kubectl -n "$ns" delete job "$name" --ignore-not-found --wait=true
+            k3s kubectl -n "$ns" apply --server-side --force-conflicts --field-manager=k3s-deploy -f - <<<"$job"
+            # Done means a Complete or Failed condition; `timeout` bounds the wait.
+            # shellcheck disable=SC2016 # the inner script expands its own arguments
+            timeout "$TIMEOUT" bash -c '
+              until conds=$(k3s kubectl -n "$0" get job "$1" -o jsonpath="{.status.conditions[?(@.status==\"True\")].type}") \
+                && [[ " $conds " == *" Complete "* || " $conds " == *" Failed "* ]]; do sleep 5; done' "$ns" "$name" || true
+            if [[ $(k3s kubectl -n "$ns" get job "$name" -o jsonpath='{.status.succeeded}') == 1 ]]; then
+              echo "Job $ns/$name complete"
+            else
+              k3s kubectl -n "$ns" logs "job/$name" --tail=100 || true
+              echo "::error::Job $ns/$name did not complete; nothing rolled out"
+              exit 1
+            fi
+          done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-jobs.json")
+
+      # Past this point Deployments change: every later failure rolls back.
+      - name: Apply
+        id: apply
+        env:
+          HAS_MANIFESTS: ${{ inputs.manifests != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$HAS_MANIFESTS" == true ]]; then
+            k3s kubectl -n "$NAMESPACE" apply --server-side --force-conflicts --field-manager=k3s-deploy \
+              -f "$RUNNER_TEMP/k3s-apply.json"
+            exit 0
+          fi
+          while read -r ns name; do
+            mapfile -t args < <(k3s kubectl -n "$ns" get deployment "$name" -o json \
+              | jq -r --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" --arg sha "$SHA" '
+                  def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
+                  .spec.template.spec.containers[] | (.image | repo) as $r | select(any($pinned[0][]; . == $r))
+                  | "\(.name)=\($r):\($sha)"')
+            if (( ${#args[@]} == 0 )); then
+              echo "$ns/$name runs none of the built images" >&2; exit 1
+            fi
+            k3s kubectl -n "$ns" set image "deployment/$name" "${args[@]}"
+          done < "$RUNNER_TEMP/k3s-deployments.txt"
+
+      - name: Watch the rollouts
+        env:
+          TIMEOUT: ${{ inputs.rollout-timeout }}
+        run: |
+          set -euo pipefail
+          while read -r ns name; do
+            k3s kubectl -n "$ns" rollout status "deployment/$name" --timeout="$TIMEOUT"
+          done < "$RUNNER_TEMP/k3s-deployments.txt"
+
+      - name: Verify the running pods
+        run: |
+          set -euo pipefail
+          while read -r ns name; do
+            dep=$(k3s kubectl -n "$ns" get deployment "$name" -o json)
+            selector=$(jq -er '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")' <<<"$dep")
+            # Every pod is Running and ready, and runs exactly the template's
+            # images; any built image in the template carries this commit.
+            k3s kubectl -n "$ns" get pods -l "$selector" -o json \
+              | jq -e --argjson tpl "$(jq -c '[.spec.template.spec.containers[].image]' <<<"$dep")" \
+                     --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" --arg sha "$SHA" '
+                  def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
+                  all($tpl[]; . as $i | (any($pinned[0][]; . == ($i | repo)) | not) or ($i | endswith(":" + $sha)))
+                  and (.items | length) > 0
+                  and all(.items[]; . as $pod |
+                    $pod.status.phase == "Running"
+                    and ($pod.metadata.deletionTimestamp == null)
+                    and all($pod.spec.containers[]; . as $c | any($tpl[]; . == $c.image))
+                    and (($pod.status.containerStatuses // []) | length == ($pod.spec.containers | length))
+                    and all($pod.status.containerStatuses[]; .ready == true))' >/dev/null \
+              || { echo "$ns/$name pods do not all serve this commit's images" >&2; exit 1; }
+            echo "$ns/$name serves $SHA"
+          done < "$RUNNER_TEMP/k3s-deployments.txt"
+
+      - name: Smoke /health for the commit
+        if: inputs.health != '[]'
+        env:
+          HEALTH: ${{ inputs.health }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r check; do
+            url=$(jq -r .url <<<"$check")
+            filter=$(jq -r .commit <<<"$check")
+            got=""
+            for _ in $(seq 1 24); do
+              if body=$(curl -fsS --connect-timeout 5 --max-time 10 "$url" 2>/dev/null) \
+                && got=$(jq -er "$filter" <<<"$body" 2>/dev/null) \
+                && [[ ${#got} -ge 12 && ( "$SHA" == "$got"* || "$got" == "$SHA"* ) ]]; then
+                echo "$url reports $got"
+                continue 2
+              fi
+              sleep 5
+            done
+            echo "::error::$url never reported $SHA (last: ${got:-no answer})"
+            exit 1
+          done < <(jq -c '.[]' <<<"$HEALTH")
 
       - name: Roll back on failure
-        if: failure() && steps.set-image.outcome == 'success'
-        env:
-          NAMESPACE: ${{ inputs.namespace }}
-          DEPLOYMENT: ${{ inputs.deployment }}
+        if: failure() && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
         run: |
-          k3s kubectl --kubeconfig="${{ inputs.kubeconfig }}" -n "$NAMESPACE" \
-            rollout undo "deployment/$DEPLOYMENT"
-          echo "::error::deploy failed after setting the image; rolled $DEPLOYMENT back"
+          set -uo pipefail
+          while read -r ns name before; do
+            now=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found \
+              -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
+            if [[ "$before" == none ]]; then
+              echo "::warning::$ns/$name is new in this deploy; left in place"
+            elif [[ -n "$now" && "$now" != "$before" ]]; then
+              k3s kubectl -n "$ns" rollout undo "deployment/$name" --to-revision="$before" \
+                && echo "::error::deploy failed; rolled $ns/$name back to revision $before"
+            fi
+          done < "$RUNNER_TEMP/k3s-revisions.txt"
