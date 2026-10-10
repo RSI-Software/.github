@@ -185,7 +185,7 @@ jobs:
           stray=$(jq -r --slurpfile images "$RUNNER_TEMP/k3s-images.json" --arg node "$NODE" '
             .[] | . as $o
             | (if .kind == "Pod" then .spec else .spec.template.spec // .spec.jobTemplate.spec.template.spec // empty end) as $pod
-            | select(any(($pod.containers + ($pod.initContainers // []))[]; . as $c | any($images[0][]; .ref == $c.image or (.pinned and ($c.image | startswith(.repository + ":"))))))
+            | select(any(($pod.containers + ($pod.initContainers // []))[]; . as $c | any($images[0][]; . as $i | $i.ref == $c.image or ($i.pinned and ($c.image | startswith($i.repository + ":"))))))
             | select(($pod.nodeSelector["kubernetes.io/hostname"] // "") != $node)
             | "\($o.kind)/\($o.metadata.name)"' "$RUNNER_TEMP/k3s-all.json")
           if [[ -n "$stray" ]]; then
