@@ -3,7 +3,7 @@
 # builds the caller's commit, imports the images into that node's containerd,
 # renders and applies the app's manifests with the images pinned to the commit,
 # runs their Jobs first, watches every rollout, smokes /health for the commit,
-# and rolls back on any failure. No registry, no Argo CD.
+# and rolls back on any failure, ConfigMap data included. No registry, no Argo CD.
 #
 # Runner-host contract (infra managed/obsidian-k3s-worker holds the reference
 # install):
@@ -221,6 +221,16 @@ jobs:
             echo "$ns $name ${rev:-none}" >> "$RUNNER_TEMP/k3s-revisions.txt"
           done < "$RUNNER_TEMP/k3s-deployments.txt"
           cat "$RUNNER_TEMP/k3s-revisions.txt"
+          # Live ConfigMaps this deploy changes: rollback restores their data,
+          # since pods rolled back still mount the same objects.
+          : > "$RUNNER_TEMP/k3s-configmaps.jsonl"
+          if [[ "$HAS_MANIFESTS" == true ]]; then
+            jq -r --arg ns "$NAMESPACE" '.items[] | select(.kind == "ConfigMap") | "\(.metadata.namespace // $ns) \(.metadata.name)"' \
+              "$RUNNER_TEMP/k3s-apply.json" | while read -r ns name; do
+              k3s kubectl -n "$ns" get configmap "$name" --ignore-not-found -o json \
+                | jq -c '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace}, data, binaryData} | with_entries(select(.value != null))'
+            done >> "$RUNNER_TEMP/k3s-configmaps.jsonl"
+          fi
 
       # Jobs (migrations) finish before any Deployment changes; a failed Job
       # stops the deploy with the running pods untouched.
@@ -336,6 +346,10 @@ jobs:
         if: failure() && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
         run: |
           set -uo pipefail
+          while IFS= read -r cm; do
+            k3s kubectl apply --server-side --force-conflicts --field-manager=k3s-deploy -f - <<<"$cm" \
+              && echo "::error::deploy failed; restored ConfigMap $(jq -r '"\(.metadata.namespace)/\(.metadata.name)"' <<<"$cm")"
+          done < "$RUNNER_TEMP/k3s-configmaps.jsonl"
           while read -r ns name before; do
             now=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found \
               -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
