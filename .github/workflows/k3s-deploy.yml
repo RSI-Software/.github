@@ -288,6 +288,8 @@ jobs:
           set -euo pipefail
           while read -r ns name; do
             dep=$(k3s kubectl -n "$ns" get deployment "$name" -o json)
+            # A worker another controller scales from 0 has no pods to check until it wakes.
+            if [[ $(jq '.spec.replicas' <<<"$dep") == 0 ]]; then echo "$ns/$name scaled to 0"; continue; fi
             selector=$(jq -er '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")' <<<"$dep")
             # Every pod is Running and ready, and runs exactly the template's
             # images; any built image in the template carries this commit.
