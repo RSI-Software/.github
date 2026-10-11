@@ -3,7 +3,7 @@
 # builds the caller's commit, imports the images into that node's containerd,
 # renders and applies the app's manifests with the images pinned to the commit,
 # runs their Jobs first, watches every rollout, smokes /health for the commit,
-# and rolls back on failure only when the target images remain on the node,
+# and rolls back on failure only when built target images remain on the node,
 # ConfigMap data included. No registry, no Argo CD.
 #
 # Runner-host contract (infra managed/obsidian-k3s-worker holds the reference
@@ -350,10 +350,6 @@ jobs:
           set -uo pipefail
           # Preflight the whole rollback before restoring shared ConfigMap data.
           # An unsafe target leaves the current Deployments and ConfigMaps intact.
-          if ! present=$(sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q); then
-            echo "::error::rollback skipped: cannot list the node's containerd images"
-            exit 1
-          fi
           : > "$RUNNER_TEMP/k3s-rollback.txt" || exit 1
           while read -r ns name before; do
             if ! dep=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found -o json); then
@@ -375,21 +371,33 @@ jobs:
                 echo "::error::rollback skipped: cannot resolve $ns/$name revision $before"
                 exit 1
               fi
-              if ! jq -e --arg node "$NODE" '
-                .nodeSelector["kubernetes.io/hostname"] == $node and (.containers | length > 0)' <<<"$target" >/dev/null; then
-                echo "::error::rollback skipped: $ns/$name revision $before is not pinned to $NODE"
-                exit 1
-              fi
-              if ! refs=$(jq -er '(.containers + (.initContainers // [])) | map(.image) | unique | .[]' <<<"$target"); then
+              # Only commit-pinned repositories depend on runner-local images.
+              # Registry-only targets can run on other nodes and pull normally.
+              if ! refs=$(jq -r --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" '
+                def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
+                [(.containers + (.initContainers // []))[].image
+                  | . as $i | select(any($pinned[0][]; . == ($i | repo)))]
+                | unique | .[]' <<<"$target"); then
                 echo "::error::rollback skipped: cannot read $ns/$name revision $before images"
                 exit 1
               fi
-              while IFS= read -r ref; do
-                if ! grep -Fxq "$ref" <<<"$present"; then
-                  echo "::error::rollback skipped: $ns/$name revision $before image $ref is missing from $NODE"
+              if [[ -n "$refs" ]]; then
+                if ! jq -e --arg node "$NODE" '
+                  .nodeSelector["kubernetes.io/hostname"] == $node' <<<"$target" >/dev/null; then
+                  echo "::error::rollback skipped: $ns/$name revision $before is not pinned to $NODE"
                   exit 1
                 fi
-              done <<<"$refs"
+                if ! present=$(sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q); then
+                  echo "::error::rollback skipped: cannot list the node's containerd images"
+                  exit 1
+                fi
+                while IFS= read -r ref; do
+                  if ! grep -Fxq "$ref" <<<"$present"; then
+                    echo "::error::rollback skipped: $ns/$name revision $before image $ref is missing from $NODE"
+                    exit 1
+                  fi
+                done <<<"$refs"
+              fi
               echo "$ns $name $before" >> "$RUNNER_TEMP/k3s-rollback.txt" || exit 1
             fi
           done < "$RUNNER_TEMP/k3s-revisions.txt"
