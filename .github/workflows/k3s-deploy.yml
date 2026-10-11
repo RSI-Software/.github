@@ -1,24 +1,17 @@
-# The one release route for k3s apps (infra docs/decisions.md, "Every k3s app
-# ships from main by one release route"): on the app's own node runner it
-# builds the caller's commit, imports the images into that node's containerd,
-# renders and applies the app's manifests with the images pinned to the commit,
-# runs their Jobs first, watches every rollout, smokes /health for the commit,
-# and rolls back on failure only when built target images remain on the node,
-# ConfigMap data included. No registry, no Argo CD.
+# The one release route for k3s apps: build the caller's commit, push to the
+# cluster registry, render/apply manifests, run Jobs, watch rollouts and smoke
+# /health. Every node pulls built images with IfNotPresent; rollback preflights
+# the registry before undoing the revision and restoring ConfigMap data.
+# Registry retention is owned by infra (the latest 10 pushed tags per repo).
 #
-# Runner-host contract (infra managed/obsidian-k3s-worker holds the reference
-# install):
-# - `buildah` and `jq` installed; the runner user's sudoers grants exactly
-#   `/usr/bin/buildah bud`, `/usr/bin/buildah push docker-archive:*`,
-#   `/usr/local/bin/k3s ctr -n k8s.io images import *` and
-#   `/usr/local/bin/k3s ctr -n k8s.io images ls -q`.
-# - `k3s kubectl` on PATH: every k3s node ships it.
-# - the app's deployer ServiceAccount kubeconfig on disk, named by the
-#   `kubeconfig` input; its Role covers every object the manifests hold.
-#
-# Images import on the runner's node only, so every pod template that runs a
-# built image must pin `kubernetes.io/hostname` to that node; the render step
-# refuses one that does not.
+# Runner-host contract: buildah, jq, curl and k3s kubectl on PATH; deployer
+# kubeconfig supplied by the caller. Buildah marks 192.168.1.231:5002 insecure;
+# anonymous pulls work on every node. Push credentials are root-only on disk.
+# Exact sudoers lines (both runners):
+# /usr/bin/buildah bud *
+# /usr/bin/buildah push --authfile /etc/k3s-deploy/registry-auth.json 192.168.1.231\:5002/* docker\://192.168.1.231\:5002/*
+# /usr/bin/buildah rmi --force 192.168.1.231\:5002/*
+# /usr/bin/buildah rmi --prune
 name: k3s deploy
 
 on:
@@ -36,14 +29,14 @@ on:
         description: >-
           JSON array of images to build, e.g.
           [{"repository": "docker.io/library/render-api", "dockerfile": "deploy/Dockerfile", "context": ".", "build-args": "COMMIT=..."}].
-          Tag is the full commit SHA unless "tag" is set; a set tag already in the node's containerd is not rebuilt.
+          Tag is the full commit SHA unless "tag" is set; a set tag already in the cluster registry is not rebuilt.
         required: true
         type: string
       manifests:
         description: >-
           Shell command, run in the checkout, that writes the app's manifests into $K3S_DEPLOY_OUT
-          ($K3S_DEPLOY_SHA and $K3S_DEPLOY_NODE are set). Every image of a built repository is pinned
-          to the commit; Jobs run to completion first, then the rest applies server-side.
+          ($K3S_DEPLOY_SHA is set). Every image of a built repository uses its registry ref
+          with IfNotPresent; Jobs run to completion first, then the rest applies server-side.
         required: false
         type: string
         default: ""
@@ -92,6 +85,7 @@ jobs:
       KUBECONFIG: ${{ inputs.kubeconfig }}
       NAMESPACE: ${{ inputs.namespace }}
       SHA: ${{ github.sha }}
+      REGISTRY: 192.168.1.231:5002
     steps:
       - name: Check out the commit under deploy
         uses: actions/checkout@v5
@@ -107,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           jq -e 'type == "array" and length > 0 and all(.[];
-              (.repository | type == "string" and length > 0 and (test(":") | not))
+              (.repository | type == "string" and length > 0 and (test("[@\\s]|:[^/]*$") | not))
               and ((.tag // "x") | type == "string" and length > 0))' <<<"$IMAGES" >/dev/null \
             || { echo "images must be a non-empty array of {repository, dockerfile?, context?, build-args?, tag?}; repository carries no tag" >&2; exit 2; }
           jq -e 'type == "array" and all(.[]; type == "string")' <<<"$DEPLOYMENTS" >/dev/null \
@@ -117,50 +111,22 @@ jobs:
           if [[ -z "$MANIFESTS" && "$DEPLOYMENTS" == "[]" ]]; then
             echo "set manifests or deployments: nothing would roll out" >&2; exit 2
           fi
-          jq -c --arg sha "$SHA" 'map(. + {ref: "\(.repository):\(.tag // $sha)", pinned: (.tag == null)})' \
+          # One image mapping for manifests, deployments and rollback checks.
+          cat > "$RUNNER_TEMP/k3s-images.jq" <<'JQ'
+          def repository:
+            sub("@.*$"; "") | sub(":[^:/]*$"; "")
+            | sub("^([^/]*[.:][^/]*|localhost)/"; "") | sub("^library/"; "");
+          def pin($images):
+            walk(if type == "object" and (.image | type) == "string" then
+              (.image | repository) as $repo
+              | ([$images[] | select(.repository == $repo)] | first) as $image
+              | if $image != null then .image = $image.ref | .imagePullPolicy = "IfNotPresent" else . end
+            else . end);
+          JQ
+          jq -L "$RUNNER_TEMP" -c --arg sha "$SHA" --arg registry "$REGISTRY" '
+            include "k3s-images";
+            map(.repository |= repository | . + {ref: "\($registry)/\(.repository):\(.tag // $sha)"})' \
             <<<"$IMAGES" > "$RUNNER_TEMP/k3s-images.json"
-          # Repositories whose every reference this deploy pins to the commit.
-          jq -c '[.[] | select(.pinned) | .repository] | unique' "$RUNNER_TEMP/k3s-images.json" > "$RUNNER_TEMP/k3s-pinned.json"
-          echo "NODE=$(hostname -s)" >> "$GITHUB_ENV"
-
-      - name: Build the images
-        run: |
-          set -euo pipefail
-          present=$(sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q)
-          : > "$RUNNER_TEMP/k3s-import.txt"
-          while IFS= read -r img; do
-            ref=$(jq -r .ref <<<"$img")
-            if [[ $(jq -r .pinned <<<"$img") == false ]] && grep -Fxq "$ref" <<<"$present"; then
-              echo "$ref already on the node; not rebuilt"
-              continue
-            fi
-            build_args=()
-            while IFS= read -r pair; do
-              if [[ -n "$pair" ]]; then build_args+=(--build-arg "$pair"); fi
-            done < <(jq -r '.["build-args"] // ""' <<<"$img")
-            echo "Building $ref"
-            # chroot isolation: RUN steps need no kernel namespaces, cgroups or
-            # /proc/sys writes, so the build survives a hardened systemd unit.
-            # The Dockerfile is repo-controlled, which is the trust boundary here.
-            sudo /usr/bin/buildah bud --isolation=chroot "${build_args[@]}" \
-              -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
-            tar="$RUNNER_TEMP/k3s-deploy-$(printf '%s' "$ref" | tr '/:' '--').tar"
-            sudo /usr/bin/buildah push "$ref" "docker-archive:$tar"
-            echo "$ref" >> "$RUNNER_TEMP/k3s-import.txt"
-          done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-images.json")
-
-      - name: Import the images into k3s
-        run: |
-          set -euo pipefail
-          while IFS= read -r ref; do
-            tar="$RUNNER_TEMP/k3s-deploy-$(printf '%s' "$ref" | tr '/:' '--').tar"
-            sudo /usr/local/bin/k3s ctr -n k8s.io images import "$tar"
-            if ! sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q | grep -Fxq "$ref"; then
-              echo "$ref missing from the node's containerd after import" >&2
-              exit 1
-            fi
-            rm -f "$tar"
-          done < "$RUNNER_TEMP/k3s-import.txt"
 
       - name: Render the manifests
         if: inputs.manifests != ''
@@ -170,30 +136,14 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/k3s-manifests"
           rm -rf "$out" && mkdir -p "$out"
-          K3S_DEPLOY_OUT="$out" K3S_DEPLOY_SHA="$SHA" K3S_DEPLOY_NODE="$NODE" bash -euo pipefail -c "$MANIFESTS"
+          K3S_DEPLOY_OUT="$out" K3S_DEPLOY_SHA="$SHA" bash -euo pipefail -c "$MANIFESTS"
           find "$out" -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) | grep -q . \
             || { echo "the manifests command wrote no manifests into \$K3S_DEPLOY_OUT" >&2; exit 1; }
           k3s kubectl create --dry-run=client -o json -R -f "$out" \
             | jq -cs '[.[] | if .kind == "List" then .items[] else . end]' > "$RUNNER_TEMP/k3s-raw.json"
-          jq -c --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" --arg sha "$SHA" '
-            def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
-            walk(if type == "object" and (.image | type) == "string"
-                 then (.image | repo) as $r | if any($pinned[0][]; . == $r) then .image = "\($r):\($sha)" else . end
-                 else . end)' \
+          jq -L "$RUNNER_TEMP" -c --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
+            include "k3s-images"; pin($images[0])' \
             "$RUNNER_TEMP/k3s-raw.json" > "$RUNNER_TEMP/k3s-all.json"
-          # Built images live on this node only: a pod template that runs one
-          # elsewhere would never start.
-          stray=$(jq -r --slurpfile images "$RUNNER_TEMP/k3s-images.json" --arg node "$NODE" '
-            .[] | . as $o
-            | (if .kind == "Pod" then .spec else .spec.template.spec // .spec.jobTemplate.spec.template.spec // empty end) as $pod
-            | select(any(($pod.containers + ($pod.initContainers // []))[]; . as $c | any($images[0][]; . as $i | $i.ref == $c.image or ($i.pinned and ($c.image | startswith($i.repository + ":"))))))
-            | select(($pod.nodeSelector["kubernetes.io/hostname"] // "") != $node)
-            | "\($o.kind)/\($o.metadata.name)"' "$RUNNER_TEMP/k3s-all.json")
-          if [[ -n "$stray" ]]; then
-            echo "images import on $NODE only; pin kubernetes.io/hostname: $NODE on:" >&2
-            echo "$stray" >&2
-            exit 1
-          fi
           jq -c 'map(select(.kind == "Job"))' "$RUNNER_TEMP/k3s-all.json" > "$RUNNER_TEMP/k3s-jobs.json"
           jq -c '{apiVersion: "v1", kind: "List", items: map(select(.kind != "Job"))}' "$RUNNER_TEMP/k3s-all.json" > "$RUNNER_TEMP/k3s-apply.json"
           jq -r '.[] | "\(.kind)/\(.metadata.name)"' "$RUNNER_TEMP/k3s-all.json"
@@ -232,6 +182,44 @@ jobs:
                 | jq -c '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace}, data, binaryData} | with_entries(select(.value != null))'
             done >> "$RUNNER_TEMP/k3s-configmaps.jsonl"
           fi
+
+      - name: Build and push the images
+        id: build
+        run: |
+          set -euo pipefail
+          : > "$RUNNER_TEMP/k3s-built.txt"
+          while IFS= read -r img; do
+            ref=$(jq -r .ref <<<"$img")
+            if [[ $(jq -r '.tag != null' <<<"$img") == true ]] \
+              && curl -sfI --connect-timeout 5 --max-time 15 \
+                -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+                "http://$REGISTRY/v2/$(jq -r .repository <<<"$img")/manifests/$(jq -r .tag <<<"$img")" >/dev/null; then
+              echo "$ref already in the registry; not rebuilt"
+              continue
+            fi
+            build_args=()
+            while IFS= read -r pair; do
+              if [[ -n "$pair" ]]; then build_args+=(--build-arg "$pair"); fi
+            done < <(jq -r '.["build-args"] // ""' <<<"$img")
+            echo "Building $ref"
+            # Record attempts too: a failed build or push must still clean up.
+            echo "$ref" >> "$RUNNER_TEMP/k3s-built.txt"
+            # chroot isolation survives the runner's hardened systemd unit.
+            sudo /usr/bin/buildah bud --isolation=chroot "${build_args[@]}" \
+              -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
+            sudo /usr/bin/buildah push --authfile /etc/k3s-deploy/registry-auth.json "$ref" "docker://$ref"
+          done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-images.json")
+
+      - name: Clean the build store
+        if: always() && steps.build.outcome != 'skipped' && steps.build.outcome != ''
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r ref; do
+            sudo /usr/bin/buildah rmi --force "$ref" || status=$?
+          done < "$RUNNER_TEMP/k3s-built.txt"
+          sudo /usr/bin/buildah rmi --prune || status=$?
+          exit "$status"
 
       # Jobs (migrations) finish before any Deployment changes; a failed Job
       # stops the deploy with the running pods untouched.
@@ -274,15 +262,14 @@ jobs:
             exit 0
           fi
           while read -r ns name; do
-            mapfile -t args < <(k3s kubectl -n "$ns" get deployment "$name" -o json \
-              | jq -r --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" --arg sha "$SHA" '
-                  def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
-                  .spec.template.spec.containers[] | (.image | repo) as $r | select(any($pinned[0][]; . == $r))
-                  | "\(.name)=\($r):\($sha)"')
-            if (( ${#args[@]} == 0 )); then
-              echo "$ns/$name runs none of the built images" >&2; exit 1
-            fi
-            k3s kubectl -n "$ns" set image "deployment/$name" "${args[@]}"
+            dep=$(k3s kubectl -n "$ns" get deployment "$name" -o json)
+            patch=$(jq -L "$RUNNER_TEMP" -c --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
+              include "k3s-images";
+              if any((.spec.template.spec.containers + (.spec.template.spec.initContainers // []))[];
+                .image as $ref | any($images[0][]; .repository == ($ref | repository)))
+              then pin($images[0]) | {spec: {template: {spec: .spec.template.spec}}}
+              else error("deployment runs none of the built images") end' <<<"$dep")
+            k3s kubectl -n "$ns" patch "deployment/$name" --type=merge -p "$patch"
           done < "$RUNNER_TEMP/k3s-deployments.txt"
 
       - name: Watch the rollouts
@@ -305,11 +292,11 @@ jobs:
             # Ignore terminal pods left by older ReplicaSets. Every remaining pod
             # is Running and ready with the template's commit-pinned images.
             k3s kubectl -n "$ns" get pods -l "$selector" -o json \
-              | jq -e --argjson tpl "$(jq -c '[.spec.template.spec.containers[].image]' <<<"$dep")" \
-                     --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" --arg sha "$SHA" '
-                  def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
+              | jq -L "$RUNNER_TEMP" -e --argjson tpl "$(jq -c '[.spec.template.spec.containers[].image]' <<<"$dep")" \
+                     --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
+                  include "k3s-images";
                   .items |= map(select(.status.phase != "Failed" and .status.phase != "Succeeded"))
-                  | all($tpl[]; . as $i | (any($pinned[0][]; . == ($i | repo)) | not) or ($i | endswith(":" + $sha)))
+                  | all($tpl[]; . as $ref | all($images[0][]; .repository != ($ref | repository) or .ref == $ref))
                   and (.items | length) > 0
                   and all(.items[]; . as $pod |
                     $pod.status.phase == "Running"
@@ -371,33 +358,27 @@ jobs:
                 echo "::error::rollback skipped: cannot resolve $ns/$name revision $before"
                 exit 1
               fi
-              # Only commit-pinned repositories depend on runner-local images.
-              # Registry-only targets can run on other nodes and pull normally.
-              if ! refs=$(jq -r --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" '
-                def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
+              if ! refs=$(jq -L "$RUNNER_TEMP" -r --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
+                include "k3s-images";
                 [(.containers + (.initContainers // []))[].image
-                  | . as $i | select(any($pinned[0][]; . == ($i | repo)))]
+                  | . as $ref | select(any($images[0][]; .repository == ($ref | repository)))]
                 | unique | .[]' <<<"$target"); then
                 echo "::error::rollback skipped: cannot read $ns/$name revision $before images"
                 exit 1
               fi
-              if [[ -n "$refs" ]]; then
-                if ! jq -e --arg node "$NODE" '
-                  .nodeSelector["kubernetes.io/hostname"] == $node' <<<"$target" >/dev/null; then
-                  echo "::error::rollback skipped: $ns/$name revision $before is not pinned to $NODE"
+              while IFS= read -r ref; do
+                [[ -n "$ref" ]] || continue
+                # Legacy node-import refs cannot be pulled from this registry.
+                path=${ref#*/}
+                if [[ "$path" == *@* ]]; then path=${path/@/\/manifests\/}; else path=${path/:/\/manifests\/}; fi
+                if [[ "$ref" != "$REGISTRY/"* ]] \
+                  || ! curl -sfI --connect-timeout 5 --max-time 15 \
+                    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+                    "http://$REGISTRY/v2/$path" >/dev/null; then
+                  echo "::error::rollback skipped: $ns/$name revision $before image $ref unavailable in registry"
                   exit 1
                 fi
-                if ! present=$(sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q); then
-                  echo "::error::rollback skipped: cannot list the node's containerd images"
-                  exit 1
-                fi
-                while IFS= read -r ref; do
-                  if ! grep -Fxq "$ref" <<<"$present"; then
-                    echo "::error::rollback skipped: $ns/$name revision $before image $ref is missing from $NODE"
-                    exit 1
-                  fi
-                done <<<"$refs"
-              fi
+              done <<<"$refs"
               echo "$ns $name $before" >> "$RUNNER_TEMP/k3s-rollback.txt" || exit 1
             fi
           done < "$RUNNER_TEMP/k3s-revisions.txt"
