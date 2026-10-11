@@ -11,8 +11,11 @@ An evicted, drained or hard-killed runner pod is lost; a failing test is not.
 | --- | --- | --- |
 | **Gone** | `failure` | "lost communication with the server" |
 | **Shutdown** | `failure` | "received a shutdown signal" |
-| **Drained** | `failure` | "The operation was canceled." |
+| **Drained or default-grace pod delete** | `failure` | "The operation was canceled." |
 | **Timeout** | `cancelled` | "exceeded the maximum execution time" |
+
+Default-grace `kubectl delete pod <runner>` reproduced the drained signal in [infra run 38125850620](https://github.com/RSI-Software/infra/actions/runs/38125850620/job/114429940060): step `cancelled`, job `failure`.
+The match uses the job conclusion; a `cancelled` job with only the bare cancellation annotation is not retried.
 
 ### Not retried
 
