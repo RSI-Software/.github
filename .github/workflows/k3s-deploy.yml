@@ -3,7 +3,8 @@
 # builds the caller's commit, imports the images into that node's containerd,
 # renders and applies the app's manifests with the images pinned to the commit,
 # runs their Jobs first, watches every rollout, smokes /health for the commit,
-# and rolls back on any failure, ConfigMap data included. No registry, no Argo CD.
+# and rolls back on failure only when the target images remain on the node,
+# ConfigMap data included. No registry, no Argo CD.
 #
 # Runner-host contract (infra managed/obsidian-k3s-worker holds the reference
 # install):
@@ -260,7 +261,7 @@ jobs:
             fi
           done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-jobs.json")
 
-      # Past this point Deployments change: every later failure rolls back.
+      # Past this point Deployments change: later failures attempt a safe rollback.
       - name: Apply
         id: apply
         env:
@@ -301,13 +302,14 @@ jobs:
             # A worker another controller scales from 0 has no pods to check until it wakes.
             if [[ $(jq '.spec.replicas' <<<"$dep") == 0 ]]; then echo "$ns/$name scaled to 0"; continue; fi
             selector=$(jq -er '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")' <<<"$dep")
-            # Every pod is Running and ready, and runs exactly the template's
-            # images; any built image in the template carries this commit.
+            # Ignore terminal pods left by older ReplicaSets. Every remaining pod
+            # is Running and ready with the template's commit-pinned images.
             k3s kubectl -n "$ns" get pods -l "$selector" -o json \
               | jq -e --argjson tpl "$(jq -c '[.spec.template.spec.containers[].image]' <<<"$dep")" \
                      --slurpfile pinned "$RUNNER_TEMP/k3s-pinned.json" --arg sha "$SHA" '
                   def repo: sub("@.*$"; "") | sub(":[^:/]*$"; "");
-                  all($tpl[]; . as $i | (any($pinned[0][]; . == ($i | repo)) | not) or ($i | endswith(":" + $sha)))
+                  .items |= map(select(.status.phase != "Failed" and .status.phase != "Succeeded"))
+                  | all($tpl[]; . as $i | (any($pinned[0][]; . == ($i | repo)) | not) or ($i | endswith(":" + $sha)))
                   and (.items | length) > 0
                   and all(.items[]; . as $pod |
                     $pod.status.phase == "Running"
@@ -346,17 +348,56 @@ jobs:
         if: failure() && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
         run: |
           set -uo pipefail
+          # Preflight the whole rollback before restoring shared ConfigMap data.
+          # An unsafe target leaves the current Deployments and ConfigMaps intact.
+          if ! present=$(sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q); then
+            echo "::error::rollback skipped: cannot list the node's containerd images"
+            exit 1
+          fi
+          : > "$RUNNER_TEMP/k3s-rollback.txt" || exit 1
+          while read -r ns name before; do
+            if ! dep=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found -o json); then
+              echo "::error::rollback skipped: cannot read $ns/$name"
+              exit 1
+            fi
+            now=$(jq -r '.metadata.annotations["deployment.kubernetes.io/revision"] // ""' <<<"$dep")
+            if [[ "$before" == none ]]; then
+              echo "::warning::$ns/$name is new in this deploy; left in place"
+            elif [[ -n "$now" && "$now" != "$before" ]]; then
+              # Use the exact owned revision, not another Deployment's history.
+              if ! target=$(k3s kubectl -n "$ns" get replicasets -o json \
+                | jq -ce --arg uid "$(jq -r .metadata.uid <<<"$dep")" --arg rev "$before" '
+                    [.items[] | select(any(.metadata.ownerReferences[]?;
+                      .uid == $uid and .kind == "Deployment" and .controller == true))
+                    | select(.metadata.annotations["deployment.kubernetes.io/revision"] == $rev)]
+                    | if length == 1 then .[0].spec.template.spec
+                      else error("target revision unavailable or ambiguous") end'); then
+                echo "::error::rollback skipped: cannot resolve $ns/$name revision $before"
+                exit 1
+              fi
+              if ! jq -e --arg node "$NODE" '
+                .nodeSelector["kubernetes.io/hostname"] == $node and (.containers | length > 0)' <<<"$target" >/dev/null; then
+                echo "::error::rollback skipped: $ns/$name revision $before is not pinned to $NODE"
+                exit 1
+              fi
+              if ! refs=$(jq -er '(.containers + (.initContainers // [])) | map(.image) | unique | .[]' <<<"$target"); then
+                echo "::error::rollback skipped: cannot read $ns/$name revision $before images"
+                exit 1
+              fi
+              while IFS= read -r ref; do
+                if ! grep -Fxq "$ref" <<<"$present"; then
+                  echo "::error::rollback skipped: $ns/$name revision $before image $ref is missing from $NODE"
+                  exit 1
+                fi
+              done <<<"$refs"
+              echo "$ns $name $before" >> "$RUNNER_TEMP/k3s-rollback.txt" || exit 1
+            fi
+          done < "$RUNNER_TEMP/k3s-revisions.txt"
           while IFS= read -r cm; do
             k3s kubectl apply --server-side --force-conflicts --field-manager=k3s-deploy -f - <<<"$cm" \
               && echo "::error::deploy failed; restored ConfigMap $(jq -r '"\(.metadata.namespace)/\(.metadata.name)"' <<<"$cm")"
           done < "$RUNNER_TEMP/k3s-configmaps.jsonl"
           while read -r ns name before; do
-            now=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found \
-              -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
-            if [[ "$before" == none ]]; then
-              echo "::warning::$ns/$name is new in this deploy; left in place"
-            elif [[ -n "$now" && "$now" != "$before" ]]; then
-              k3s kubectl -n "$ns" rollout undo "deployment/$name" --to-revision="$before" \
-                && echo "::error::deploy failed; rolled $ns/$name back to revision $before"
-            fi
-          done < "$RUNNER_TEMP/k3s-revisions.txt"
+            k3s kubectl -n "$ns" rollout undo "deployment/$name" --to-revision="$before" \
+              && echo "::error::deploy failed; rolled $ns/$name back to revision $before"
+          done < "$RUNNER_TEMP/k3s-rollback.txt"
