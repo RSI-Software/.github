@@ -46,7 +46,7 @@ if tool == "sudo":
     elif args[2] == "--force":
         if args[-1] in s["store"]: s["store"].remove(args[-1])
     elif args[2] == "--prune":
-        s["store"] = []
+        s["pruned"] = s.get("pruned", 0) + 1
     if s.get("fail") == command or s.get("fail") == args[-1]: finish(1)
     finish()
 if tool == "curl":
@@ -94,7 +94,7 @@ class WorkflowTests(unittest.TestCase):
             (self.dir / tool).symlink_to(binary)
         self.env = dict(os.environ, PATH=str(self.dir) + ":" + os.environ["PATH"],
                         FIXTURE=str(self.fixture), RUNNER_TEMP=str(self.dir), REGISTRY=REGISTRY,
-                        SHA="new", NAMESPACE="ns", DEPLOYMENTS='["server"]', HEALTH="[]",
+                        HOME=str(self.dir), GITHUB_REF="refs/heads/main", DEFAULT_BRANCH="main", SHA="new", NAMESPACE="ns", DEPLOYMENTS='["server"]', HEALTH="[]",
                         MANIFESTS="", HAS_MANIFESTS="false")
         (self.dir / "k3s-deployments.txt").write_text("ns server\n")
         (self.dir / "k3s-revisions.txt").write_text("ns server 11\n")
@@ -123,38 +123,67 @@ class WorkflowTests(unittest.TestCase):
                 image = self.resolve([{"repository": repo}])[0]
                 self.assertEqual(image["ref"], f"{REGISTRY}/{'team/app' if repo.startswith('ghcr.io') else APP}:new")
 
-    def test_build_push_and_cleanup(self):
+    def sudo_calls(self):
+        return [c[2:] for c in self.state["calls"] if c[0] == "sudo"]
+
+    def test_only_the_default_branch_deploys(self):
+        self.env["GITHUB_REF"] = "refs/heads/feature"
+        result = self.run_step("Resolve the images", 2)
+        self.assertIn("only from the default branch", result.stderr)
+
+    def test_build_push_and_keep_the_cache(self):
         self.resolve([{"repository": APP, "dockerfile": "deploy/Dockerfile", "context": "src",
                        "build-args": "COMMIT=new\nMODE=prod"}])
         self.run_step("Build and push the images")
         self.assertIn(REF, self.state["registry"])
-        calls = [c[2:] for c in self.state["calls"] if c[0] == "sudo"]
-        self.assertEqual(calls[1], ["push", "--authfile", "/etc/k3s-deploy/registry-auth.json", REF, "docker://" + REF])
-        self.assertEqual(calls[0], ["bud", "--isolation=chroot", "--build-arg", "COMMIT=new",
-                                  "--build-arg", "MODE=prod", "-f", "deploy/Dockerfile", "-t", REF, "src"])
-        self.run_step("Clean the build store")
-        self.assertEqual(self.state["store"], [])
-        self.assertEqual([c[2:] for c in self.state["calls"][-2:]], [["rmi", "--force", REF], ["rmi", "--prune"]])
+        self.assertEqual(self.sudo_calls(), [
+            ["rmi", "--prune"],
+            ["bud", "--isolation=chroot", "--layers", "--cache-ttl=168h", "--build-arg", "COMMIT=new",
+             "--build-arg", "MODE=prod", "-f", "deploy/Dockerfile", "-t", REF, "src"],
+            ["push", "--authfile", "/etc/k3s-deploy/registry-auth.json", REF, "docker://" + REF]])
+        self.run_step("Rotate the layer cache")
+        self.assertEqual(self.state["store"], [REF])
 
-    def test_failed_build_or_push_still_cleans(self):
-        for command in ("bud", "push"):
-            with self.subTest(command=command):
-                self.state["fail"] = command
-                self.run_step("Build and push the images", 1)
-                self.run_step("Clean the build store")
-                self.assertEqual(self.state["store"], [])
+    def test_next_deploy_drops_the_previous_build_and_prunes_weekly(self):
+        self.run_step("Build and push the images")
+        self.run_step("Rotate the layer cache")
+        self.env["SHA"] = "next"
+        self.resolve([{"repository": APP}, {"repository": APP + "-sandbox"}])
+        self.run_step("Build and push the images")
+        self.run_step("Rotate the layer cache")
+        self.assertEqual(self.state["pruned"], 1)
+        self.assertEqual(self.state["store"], [f"{REGISTRY}/{APP}:next", f"{REGISTRY}/{APP}-sandbox:next"])
+        self.assertEqual(self.sudo_calls()[-1], ["rmi", "--force", REF])
+        stamp = self.dir / ".cache/k3s-deploy/pruned"
+        os.utime(stamp, (0, 0))
+        self.run_step("Build and push the images")
+        self.assertEqual(self.state["pruned"], 2)
+
+    def test_failed_build_is_not_cached_and_failed_push_is(self):
+        self.state["fail"] = "bud"
+        self.run_step("Build and push the images", 1)
+        self.run_step("Rotate the layer cache")
+        self.assertFalse((self.dir / f".cache/k3s-deploy/last-{APP}").exists())
+        self.state["fail"] = "push"
+        self.run_step("Build and push the images", 1)
+        self.run_step("Rotate the layer cache")
+        self.assertEqual((self.dir / f".cache/k3s-deploy/last-{APP}").read_text(), REF + "\n")
         self.assertIn("if: always() && steps.build.outcome", WORKFLOW.read_text())
 
-    def test_cleanup_failure_still_prunes(self):
+    def test_previous_build_removal_failure_only_warns(self):
+        last = self.dir / f".cache/k3s-deploy/last-{APP}"
+        last.parent.mkdir(parents=True)
+        last.write_text(OLD + "\n")
         self.run_step("Build and push the images")
-        self.state["fail"] = REF
-        self.run_step("Clean the build store", 1)
-        self.assertEqual(self.state["calls"][-1][2:], ["rmi", "--prune"])
+        self.state["fail"] = OLD
+        result = self.run_step("Rotate the layer cache")
+        self.assertIn("could not remove the previous build " + OLD, result.stdout)
+        self.assertEqual(last.read_text(), REF + "\n")
 
     def test_explicit_tag_skip_and_missing_rebuild(self):
         self.resolve([{"repository": APP, "tag": "old"}])
         self.run_step("Build and push the images")
-        self.assertFalse(any(c[0] == "sudo" for c in self.state["calls"]))
+        self.assertEqual(self.sudo_calls(), [["rmi", "--prune"]])
         self.assertIn("application/vnd.oci.image.manifest", self.state["calls"][-1][-2])
         self.state["registry"] = []
         self.run_step("Build and push the images")
@@ -216,10 +245,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("undo", self.state)
         self.assertNotIn("applied", self.state)
 
-    def test_prune_failure_surfaces(self):
-        self.run_step("Build and push the images")
+    def test_prune_failure_stops_the_build(self):
         self.state["fail"] = "--prune"
-        self.run_step("Clean the build store", 1)
+        self.run_step("Build and push the images", 1)
+        self.assertEqual(self.sudo_calls(), [["rmi", "--prune"]])
+        self.assertFalse((self.dir / ".cache/k3s-deploy/pruned").exists())
 
     def test_verify_zero_replicas_and_explicit_tag(self):
         self.state["deployment"]["spec"]["replicas"] = 0
