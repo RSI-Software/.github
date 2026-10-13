@@ -10,6 +10,12 @@ permissions: {}
 
 jobs:
   actionlint:
+    # Code CI runs once per native stack, on its top layer, and never on drafts.
+    # Push and dispatch carry no pull_request, so they always run.
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.pull_request.stack == null ||
+       github.event.pull_request.stack.position == github.event.pull_request.stack.size)
     runs-on: ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:

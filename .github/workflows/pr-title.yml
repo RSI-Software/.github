@@ -1,0 +1,51 @@
+# Lints the caller's pull-request title as the squash commit header. One script
+# step: no checkout, no install. Drafts and edits that keep the title skip
+# without a runner. See docs/pr-title.md.
+name: PR title
+
+on:
+  workflow_call:
+    inputs:
+      scopes:
+        description: Allowed scopes, space or comma separated; empty allows any scope or none.
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  title:
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.action != 'edited' || github.event.changes.title.from != null)
+    runs-on: ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Lint the title
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          SCOPES: ${{ inputs.scopes }}
+        with:
+          script: |
+            const types = ["build", "ci", "chore", "docs", "feat", "fix", "perf", "refactor", "revert", "test"];
+            const scopes = process.env.SCOPES.split(/[\s,]+/).filter(Boolean);
+            const title = process.env.TITLE;
+            // The squash header is `<title> (#N)`.
+            const header = `${title} (#${process.env.NUMBER})`;
+            const problems = [];
+            const match = /^(\w+)(?:\(([^()]*)\))?!?: (\S(?:.*\S)?)$/.exec(title);
+            if (!match) {
+              problems.push("expected `type(scope)!: subject`");
+            } else {
+              const [, type, scope, subject] = match;
+              if (!types.includes(type)) problems.push(`type \`${type}\` is not one of: ${types.join(", ")}`);
+              if (scopes.length > 0 && !scopes.includes(scope)) problems.push(`scope must be one of: ${scopes.join(", ")}`);
+              if (scope === "") problems.push("scope is empty");
+              if (subject.endsWith(".")) problems.push("subject ends with a period");
+            }
+            if (header.length > 72) problems.push(`header \`${header}\` is ${header.length} characters; the limit is 72`);
+            if (problems.length > 0) core.setFailed(`PR title: ${problems.join("; ")}`);
+            else core.info(`PR title ok: ${header}`);
