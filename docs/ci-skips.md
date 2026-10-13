@@ -8,7 +8,8 @@ Skip work a change cannot affect, but keep one check that succeeds.
 | Change | Pattern | Runner pod |
 | --- | --- | --- |
 | Newer PR push | cancel the superseded run | freed mid-run |
-| Draft PR | heavy jobs: job `if:` | none |
+| Draft PR | every job: job `if:` | none |
+| Lower stack layer | code jobs: job `if:` | none |
 | PR title or body edit | no `edited` in CI types | none |
 | Docs only, one job | step `if:` on scope | one, no toolchain |
 | Docs only, several jobs | light gate job, job `if:` on scope | gate only |
@@ -19,7 +20,7 @@ Skip work a change cannot affect, but keep one check that succeeds.
 
 `ghb pr merge` lands a head only when a check succeeded.
 
-- **All skipped:** refused; a skip never passes
+- **All skipped:** refused; lower layers excepted
 - **No checks:** refused unless triggers exclude it
 - **`workflow_run` trigger:** that proof fails
 - **Required checks:** unenforced on GitHub Free
@@ -56,15 +57,21 @@ concurrency:
 - **Workflow in group:** no cross-workflow cancels
 - **`main`:** never cancels
 
-### Draft skip
+### Draft and stack skip
 
 ```yaml
-  heavy:
-    if: github.event.pull_request.draft != true
-    runs-on: ${{ vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+  verify:
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.pull_request.stack == null ||
+       github.event.pull_request.stack.position == github.event.pull_request.stack.size)
 ```
 
-Pushes carry no `pull_request`, so they always run.
+- **Stack:** the top layer runs for every layer
+- **Push, dispatch:** no `pull_request`, so they run
+- **Existing `if:`:** AND it, in parentheses
+
+Policy: [infra decisions](https://github.com/RSI-Software/infra/blob/main/docs/decisions.md).
 
 ### Docs-only scope
 
@@ -79,13 +86,17 @@ One step in the always-on job decides; `code=true` means run everything.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 2
-      # HEAD^1 is the PR base or the squash commit's parent; a git error runs everything.
+      # The whole change: a stack from its base, a PR from its base, a push from
+      # its previous head. A missing base or a git error runs everything.
       - id: scope
+        env:
+          BASE: ${{ github.event.pull_request.stack.base.sha || github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] ||
-            ! git diff --quiet --no-renames HEAD^1 HEAD -- . ':(exclude)docs/' ':(exclude)*.md'; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          fi
+          code() { echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "${BASE//0/}" ] || code
+          git cat-file -e "$BASE^{commit}" 2>/dev/null ||
+            git fetch -q --no-tags --depth=1 origin "$BASE" || code
+          git diff --quiet --no-renames "$BASE" HEAD -- . ':(exclude)docs/' ':(exclude)*.md' || code
       # Always-on checks here, such as the secret scan and commit lint.
       - if: steps.scope.outputs.code
         run: bun install --frozen-lockfile
@@ -101,7 +112,7 @@ Further jobs skip without a pod:
 
 - **Tested docs:** code; narrow the exclude
 - **Shipped prompts:** code too
-- **Squash only:** one commit per push
+- **Moved base:** over-includes; fails open
 
 ### `main` push
 
@@ -116,7 +127,7 @@ Keep it in step with the scope excludes.
 ### PR title lint
 
 Its own `pr-title.yml` runs on `edited`, so prose fixes never rerun CI.
-See [vone `pr-title.yml`](https://github.com/RSI-Software/vone/blob/main/.github/workflows/pr-title.yml): sparse checkout, one step.
+Call the shared workflow: [PR title](pr-title.md).
 
 ### Lanes
 
@@ -137,6 +148,6 @@ Detail: [rsi-k3s routing](https://github.com/RSI-Software/infra/blob/main/docs/r
 | Repo | Pattern |
 | --- | --- |
 | [infra](https://github.com/RSI-Software/infra/blob/main/.github/workflows/ci.yml) | step skip in one `verify` job |
-| [vtwo-proto](https://github.com/RSI-Software/vtwo-proto/blob/main/.github/workflows/ci.yml) | one `verify` job, draft skip |
+| [vtwo-proto](https://github.com/RSI-Software/vtwo-proto/blob/main/.github/workflows/ci.yml) | one `verify` job, stack skip |
 | [vone](https://github.com/RSI-Software/vone/blob/main/.github/workflows/ci.yml) | gate job, job skips |
 | [rsi-pr-agent](https://github.com/RSI-Software/rsi-pr-agent/blob/main/.github/workflows/ci.yml) | step skip, `main` paths-ignore |
