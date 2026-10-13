@@ -9,6 +9,7 @@
 - **SC2016:** off; single quotes are intended
 - **Runner:** `RSI_CI_RUNNER`, else `ubuntu-latest`
 - **Scope:** `.github/workflows/` of the caller
+- **Skips:** drafts and lower native-stack layers
 
 ## Caller
 
@@ -16,6 +17,7 @@ Each repository calls it from its own file, never a job in `ci.yml`.
 
 - **Path:** `.github/workflows/actionlint.yml`
 - **Trigger:** workflow file changes only
+- **`ready_for_review`:** runs a draft-skipped lint
 - **Required check:** never
 - **Branch:** the repository's default
 
@@ -23,6 +25,7 @@ Each repository calls it from its own file, never a job in `ci.yml`.
 name: actionlint
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: [.github/workflows/**, .github/actionlint.yaml]
   push:
     branches: [main]
