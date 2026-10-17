@@ -22,6 +22,10 @@ The match uses the job conclusion; a `cancelled` job with only the bare cancella
 - **Real failure:** the run stays red
 - **Deliberate cancel:** a user or newer run
 - **Fail-fast sibling:** reruns with its run
+- **Consecutive losses:** lost/shutdown twice
+
+The guard compares the job's last two actual executions, ignoring carried-over workflow attempts.
+Lost and shutdown signals count together; timeout and drain signals do not trigger this guard.
 
 ### Rerun
 
@@ -43,10 +47,14 @@ GitHub reruns one job per request, only once the run finishes.
 
 - **Pressure kills:** CI yields; a rerun is safe
 - **Timeout:** a hung test or a hard-killed pod
-- **OOM:** no filter; judged by its signal
-- **Cap:** an always-lost job stops at 3
+- **OOM:** repeated lost/shutdown stops at 2
+- **Cap:** other retriable signals stop at 3
 - **Runner:** GitHub-hosted, a minute per call
 - **Real failures:** a rerun never hides them
+
+A single node loss still gets a retry.
+Repeated loss can instead mean a deterministic memory-limit kill: [promptletariat run 38997884442](https://github.com/RSI-Software/promptletariat/actions/runs/38997884442) lost `verify` on all three attempts at the 8 GiB `ci` limit.
+Timeouts and drained pods retain their existing retries because their annotations do not identify this repeated lost/shutdown pattern.
 
 ## Caller
 

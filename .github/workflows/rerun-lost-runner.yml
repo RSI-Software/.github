@@ -29,15 +29,18 @@ jobs:
           DRY_RUN: "false"
         run: |
           set -euo pipefail
-          lost='lost communication with the server|received a shutdown signal|exceeded the maximum execution time'
+          runner_lost='lost communication with the server|received a shutdown signal'
+          lost="$runner_lost|exceeded the maximum execution time"
           note() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
 
           # A job carried over from an earlier attempt keeps its first start time, so
           # each job is judged by the attempt that last ran it and counts only its own runs.
-          declare -A ran_id runs
+          declare -A ran_id previous_id runs
           for (( a = 1; a <= ATTEMPT; a++ )); do
             since=$(gh api "repos/$REPO/actions/runs/$RUN/attempts/$a" --jq .run_started_at)
-            while IFS=$'\t' read -r id name; do ran_id[$name]=$id runs[$name]=$(( ${runs[$name]:-0} + 1 ))
+            while IFS=$'\t' read -r id name; do
+              previous_id[$name]=${ran_id[$name]:-}
+              ran_id[$name]=$id runs[$name]=$(( ${runs[$name]:-0} + 1 ))
             done < <(gh api --paginate "repos/$REPO/actions/runs/$RUN/attempts/$a/jobs" \
               --jq ".jobs[] | select(.started_at >= \"$since\") | [.id, .name] | @tsv")
           done
@@ -49,7 +52,16 @@ jobs:
             # timeout was stopped on purpose, by a newer run or by a failing sibling.
             if grep -Eq "$lost" <<< "$messages" ||
               { [[ "$conclusion" == failure ]] && grep -qxF 'The operation was canceled.' <<< "$messages"; }; then
-              if (( ${runs[$name]:-1} < 3 )); then
+              # Repeated runner loss can be a deterministic pod memory-limit kill.
+              # Compare actual executions, not workflow attempts carrying this job over.
+              previous_messages=''
+              if grep -Eq "$runner_lost" <<< "$messages" && [[ -n "${previous_id[$name]:-}" ]]; then
+                previous_messages=$(gh api "repos/$REPO/check-runs/${previous_id[$name]}/annotations" --jq '.[].message')
+              fi
+              if grep -Eq "$runner_lost" <<< "$previous_messages"; then
+                note "- consecutive runner losses, no more reruns: $name"
+                real=$((real + 1))
+              elif (( ${runs[$name]:-1} < 3 )); then
                 lost_jobs+=("$id"$'\t'"$name")
               else
                 note "- ran 3 times, no more reruns: $name"
