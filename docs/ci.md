@@ -87,8 +87,9 @@ The runner image bakes these; any other version downloads every run:
 - **Bun:** 1.4.2
 - **Playwright:** 1.63.0, with Chromium
 - **Docker Compose**
+- **ffmpeg, bzip2, tmux**
 
-Not baked: `gh`, `bzip2`, `ffmpeg`, `tmux`.
+Not baked: `gh`.
 A tool every run installs belongs in the [image](https://github.com/RSI-Software/infra/blob/main/docs/runbooks/rsi-k3s.md#runner-image).
 Pin setup actions to the baked version, or drop them.
 `XDG_CACHE_HOME` alone hides the image's Chromium; keep `PLAYWRIGHT_BROWSERS_PATH`.
