@@ -166,11 +166,8 @@ concurrency:
 - **Workflow in group:** no cross-workflow cancels
 - **`main`:** never cancels
 
-A job that reads the title keeps `edited` and skips body-only edits:
-
-```yaml
-    if: github.event.action != 'edited' || github.event.changes.title != null
-```
+A job that reads the title keeps `edited`, unfiltered.
+A body-edit skip cancels a real run and its skipped check hides an earlier failure.
 
 ### Draft and stack skip
 
