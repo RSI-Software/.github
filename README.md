@@ -11,4 +11,4 @@ See [actionlint](docs/actionlint.md) for the shared workflow lint.
 
 See [PR title](docs/pr-title.md) for the shared pull-request title lint.
 
-See [CI skips](docs/ci-skips.md) for skipping CI work a change does not need.
+See [CI](docs/ci.md) for workflow setup: lanes, skips, memory, disk, and footguns.
