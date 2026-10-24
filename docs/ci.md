@@ -1,7 +1,7 @@
 # CI
 
 How to set up a workflow on rsi-k3s runners.
-Lane sizes and the reasons behind them live in infra: [`capacity.yaml`](https://github.com/RSI-Software/infra/blob/main/managed/rsi-k3s/capacity.yaml), [decisions](https://github.com/RSI-Software/infra/blob/main/docs/decisions.md).
+Lane sizes and the reasons behind them live in infra: [`capacity.yaml`](https://github.com/RSI-Software/rsi/blob/main/infra/managed/rsi-k3s/capacity.yaml), [decisions](https://github.com/RSI-Software/rsi/blob/main/infra/docs/decisions.md).
 Live cost per job: [ci-ledger](https://k3s.rsi.nz).
 
 ## Checklist
@@ -90,7 +90,7 @@ The runner image bakes these; any other version downloads every run:
 - **ffmpeg, bzip2, tmux**
 
 Not baked: `gh`.
-A tool every run installs belongs in the [image](https://github.com/RSI-Software/infra/blob/main/docs/runbooks/rsi-k3s.md#runner-image).
+A tool every run installs belongs in the [image](https://github.com/RSI-Software/rsi/blob/main/infra/docs/runbooks/rsi-k3s.md#runner-image).
 Pin setup actions to the baked version, or drop them.
 `XDG_CACHE_HOME` alone hides the image's Chromium; keep `PLAYWRIGHT_BROWSERS_PATH`.
 
@@ -245,11 +245,11 @@ ci-heavy:  ${{ vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER ||
 ci-urgent: ${{ vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
 ```
 
-Detail: [rsi-k3s routing](https://github.com/RSI-Software/infra/blob/main/docs/rsi-k3s.md#routing).
+Detail: [rsi-k3s routing](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#routing).
 
 ### Image builds
 
-Node BuildKit, no Docker daemon: [rsi-k3s BuildKit](https://github.com/RSI-Software/infra/blob/main/docs/runbooks/rsi-k3s.md#buildkit).
+Node BuildKit, no Docker daemon: [rsi-k3s BuildKit](https://github.com/RSI-Software/rsi/blob/main/infra/docs/runbooks/rsi-k3s.md#buildkit).
 
 ## In use
 
