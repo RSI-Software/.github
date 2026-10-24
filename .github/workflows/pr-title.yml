@@ -1,9 +1,11 @@
 # Lints the caller's pull-request title as the squash commit header. One script
 # step: no checkout, no install. Drafts and edits that keep the title skip
-# without a runner. See docs/pr-title.md.
+# without a runner. See docs/pr-title.md. pull_request lints this repository's own titles.
 name: PR title
 
 on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
   workflow_call:
     inputs:
       scopes:
