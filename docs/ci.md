@@ -62,7 +62,7 @@ Fix it at the cause:
 
 ## Disk
 
-Runner nodes use consumer SSDs ([infra#204](https://github.com/RSI-Software/infra/issues/204)).
+Runner nodes use consumer SSDs ([rsi#640](https://github.com/RSI-Software/rsi/issues/640)).
 The lanes point caches at tmpfs; a job that overrides them writes to disk.
 
 | Path | Where |
