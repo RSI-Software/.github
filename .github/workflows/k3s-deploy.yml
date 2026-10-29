@@ -206,7 +206,9 @@ jobs:
           # stages and failed builds. This build's stages then seed the cache.
           mkdir -p "$HOME/.cache/k3s-deploy"
           if [[ -z $(find "$HOME/.cache/k3s-deploy/pruned" -mtime -7 2>/dev/null) ]]; then
-            sudo /usr/bin/buildah rmi --prune
+            # Other jobs on a shared node may hold images; a refused prune never fails the deploy.
+            sudo /usr/bin/buildah rmi --prune \
+              || echo "::warning::buildah prune skipped images in use by other containers"
             touch "$HOME/.cache/k3s-deploy/pruned"
           fi
           while IFS= read -r img; do
@@ -225,7 +227,7 @@ jobs:
             echo "Building $ref"
             # chroot isolation survives the runner's hardened systemd unit.
             # Cached layers older than a week rebuild, so RUN steps pick up updates.
-            sudo /usr/bin/buildah bud --isolation=chroot --layers --cache-ttl=168h "${build_args[@]}" \
+            sudo /usr/bin/buildah bud --isolation=chroot --layers --force-rm --cache-ttl=168h "${build_args[@]}" \
               -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" \
               -f "$RUNNER_TEMP/k3s-commit.Containerfile" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
             # A built image is its repository's next cache, pushed or not.

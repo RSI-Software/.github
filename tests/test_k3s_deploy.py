@@ -138,7 +138,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn(REF, self.state["registry"])
         self.assertEqual(self.sudo_calls(), [
             ["rmi", "--prune"],
-            ["bud", "--isolation=chroot", "--layers", "--cache-ttl=168h", "--build-arg", "COMMIT=new",
+            ["bud", "--isolation=chroot", "--layers", "--force-rm", "--cache-ttl=168h", "--build-arg", "COMMIT=new",
              "--build-arg", "MODE=prod", "-f", "deploy/Dockerfile",
              "-f", str(self.dir / "k3s-commit.Containerfile"), "-t", REF, "src"],
             ["push", "--authfile", "/etc/k3s-deploy/registry-auth.json", REF, "docker://" + REF]])
@@ -262,11 +262,14 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("undo", self.state)
         self.assertNotIn("applied", self.state)
 
-    def test_prune_failure_stops_the_build(self):
+    def test_refused_prune_warns_and_builds(self):
+        self.resolve([{"repository": APP}])
         self.state["fail"] = "--prune"
-        self.run_step("Build and push the images", 1)
-        self.assertEqual(self.sudo_calls(), [["rmi", "--prune"]])
-        self.assertFalse((self.dir / ".cache/k3s-deploy/pruned").exists())
+        out = self.run_step("Build and push the images").stdout
+        self.assertIn("::warning::buildah prune skipped images in use", out)
+        self.assertEqual([c[0] for c in self.sudo_calls()], ["rmi", "bud", "push"])
+        self.assertIn(REF, self.state["registry"])
+        self.assertTrue((self.dir / ".cache/k3s-deploy/pruned").exists())
 
     def test_verify_zero_replicas_and_explicit_tag(self):
         self.state["deployment"]["spec"]["replicas"] = 0
