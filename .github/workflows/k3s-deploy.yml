@@ -198,6 +198,10 @@ jobs:
         run: |
           set -euo pipefail
           : > "$RUNNER_TEMP/k3s-built.txt"
+          # Buildah keys ARG by name and ENV by its unexpanded instruction.
+          # Append a literal ENV in the final stage: only this metadata step
+          # misses cache when the commit changes, even if all files are identical.
+          printf 'ENV COMMIT=%s\n' "$SHA" > "$RUNNER_TEMP/k3s-commit.Containerfile"
           # Weekly, before building, drop dangling images: superseded build
           # stages and failed builds. This build's stages then seed the cache.
           mkdir -p "$HOME/.cache/k3s-deploy"
@@ -222,7 +226,8 @@ jobs:
             # chroot isolation survives the runner's hardened systemd unit.
             # Cached layers older than a week rebuild, so RUN steps pick up updates.
             sudo /usr/bin/buildah bud --isolation=chroot --layers --cache-ttl=168h "${build_args[@]}" \
-              -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
+              -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" \
+              -f "$RUNNER_TEMP/k3s-commit.Containerfile" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
             # A built image is its repository's next cache, pushed or not.
             echo "$ref" >> "$RUNNER_TEMP/k3s-built.txt"
             sudo /usr/bin/buildah push --authfile /etc/k3s-deploy/registry-auth.json "$ref" "docker://$ref"
