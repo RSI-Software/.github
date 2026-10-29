@@ -4,19 +4,23 @@
 # the registry before undoing the revision and restoring ConfigMap data.
 # Registry retention is owned by infra (the latest 10 pushed tags per repo).
 #
-# Layer cache: the runner's root buildah store keeps each repository's latest
-# build (layers up to a week old), so a build rewrites only the layers its
-# change touches, and the registry and nodes receive only those. Only
-# default-branch deploys build here; PR image checks run on ephemeral CI runners.
+# Layer cache: each runner user owns a root buildah store that keeps its
+# repository's latest build (layers up to a week old), so a build rewrites only
+# the layers its change touches, and the registry and nodes receive only those.
+# Runners on one node never share a store: one repository's prune or rotation
+# never evicts another's cache or races its build. Only default-branch deploys
+# build here; PR image checks run on ephemeral CI runners.
 #
 # Runner-host contract: buildah, jq, curl and k3s kubectl on PATH; deployer
 # kubeconfig supplied by the caller. Buildah marks 192.168.1.231:5002 insecure;
 # anonymous pulls work on every node. Push credentials are root-only on disk.
-# Exact sudoers lines (both runners):
-# /usr/bin/buildah bud *
-# /usr/bin/buildah push --authfile /etc/k3s-deploy/registry-auth.json 192.168.1.231\:5002/* docker\://192.168.1.231\:5002/*
-# /usr/bin/buildah rmi --force 192.168.1.231\:5002/*
-# /usr/bin/buildah rmi --prune
+# The runner unit allows writes to /var/lib/containers and /run/containers.
+# Exact sudoers lines, with STORE the runner user's store
+# (--root /var/lib/containers/k3s-deploy/USER --runroot /run/containers/k3s-deploy/USER):
+# /usr/bin/buildah STORE bud *
+# /usr/bin/buildah STORE push --authfile /etc/k3s-deploy/registry-auth.json 192.168.1.231\:5002/* docker\://192.168.1.231\:5002/*
+# /usr/bin/buildah STORE rmi --force 192.168.1.231\:5002/*
+# /usr/bin/buildah STORE rmi --prune
 name: k3s deploy
 
 on:
@@ -121,6 +125,8 @@ jobs:
           if [[ -z "$MANIFESTS" && "$DEPLOYMENTS" == "[]" ]]; then
             echo "set manifests or deployments: nothing would roll out" >&2; exit 2
           fi
+          # The runner user's own buildah store; its sudoers lines name it exactly.
+          echo "STORE=k3s-deploy/$(id -un)" >> "$GITHUB_ENV"
           # One image mapping for manifests, deployments and rollback checks.
           cat > "$RUNNER_TEMP/k3s-images.jq" <<'JQ'
           def repository:
@@ -202,13 +208,14 @@ jobs:
           # Append a literal ENV in the final stage: only this metadata step
           # misses cache when the commit changes, even if all files are identical.
           printf 'ENV COMMIT=%s\n' "$SHA" > "$RUNNER_TEMP/k3s-commit.Containerfile"
-          # Weekly, before building, drop dangling images: superseded build
-          # stages and failed builds. This build's stages then seed the cache.
+          buildah() { sudo /usr/bin/buildah --root "/var/lib/containers/$STORE" --runroot "/run/containers/$STORE" "$@"; }
+          # Weekly, before building, drop dangling images from this runner's
+          # store: superseded build stages and failed builds. This build's
+          # stages then seed the cache.
           mkdir -p "$HOME/.cache/k3s-deploy"
           if [[ -z $(find "$HOME/.cache/k3s-deploy/pruned" -mtime -7 2>/dev/null) ]]; then
-            # Other jobs on a shared node may hold images; a refused prune never fails the deploy.
-            sudo /usr/bin/buildah rmi --prune \
-              || echo "::warning::buildah prune skipped images in use by other containers"
+            # A refused prune never fails the deploy.
+            buildah rmi --prune || echo "::warning::buildah prune skipped images in use by other containers"
             touch "$HOME/.cache/k3s-deploy/pruned"
           fi
           while IFS= read -r img; do
@@ -227,12 +234,12 @@ jobs:
             echo "Building $ref"
             # chroot isolation survives the runner's hardened systemd unit.
             # Cached layers older than a week rebuild, so RUN steps pick up updates.
-            sudo /usr/bin/buildah bud --isolation=chroot --layers --force-rm --cache-ttl=168h "${build_args[@]}" \
+            buildah bud --isolation=chroot --layers --force-rm --cache-ttl=168h "${build_args[@]}" \
               -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" \
               -f "$RUNNER_TEMP/k3s-commit.Containerfile" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
             # A built image is its repository's next cache, pushed or not.
             echo "$ref" >> "$RUNNER_TEMP/k3s-built.txt"
-            sudo /usr/bin/buildah push --authfile /etc/k3s-deploy/registry-auth.json "$ref" "docker://$ref"
+            buildah push --authfile /etc/k3s-deploy/registry-auth.json "$ref" "docker://$ref"
           done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-images.json")
 
       # Each repository keeps its latest build as the layer cache. Removing the
@@ -241,12 +248,13 @@ jobs:
         if: always() && steps.build.outcome != 'skipped' && steps.build.outcome != ''
         run: |
           set -euo pipefail
+          buildah() { sudo /usr/bin/buildah --root "/var/lib/containers/$STORE" --runroot "/run/containers/$STORE" "$@"; }
           while IFS= read -r ref; do
             repo=${ref#"$REGISTRY/"}
             repo=${repo%:*}
             last="$HOME/.cache/k3s-deploy/last-${repo//\//_}"
             if [[ -f "$last" ]] && previous=$(<"$last") && [[ "$previous" != "$ref" ]]; then
-              sudo /usr/bin/buildah rmi --force "$previous" \
+              buildah rmi --force "$previous" \
                 || echo "::warning::could not remove the previous build $previous"
             fi
             echo "$ref" > "$last"

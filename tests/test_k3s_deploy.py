@@ -32,12 +32,17 @@ args = sys.argv[1:]
 tool = pathlib.Path(sys.argv[0]).name
 p = pathlib.Path(os.environ["FIXTURE"])
 s = json.loads(p.read_text())
+if tool == "sudo":
+    # Every buildah call names the runner user's own store, as its sudoers lines do.
+    store = "k3s-deploy/" + os.environ["USER_NAME"]
+    assert args[:5] == ["/usr/bin/buildah", "--root", "/var/lib/containers/" + store,
+                        "--runroot", "/run/containers/" + store], args
+    args = args[:1] + args[5:]
 s["calls"].append([tool] + args)
 def finish(code=0):
     p.write_text(json.dumps(s))
     sys.exit(code)
 if tool == "sudo":
-    assert args[0] == "/usr/bin/buildah", args
     command = args[1]
     if command == "bud":
         s["store"].append(args[args.index("-t") + 1])
@@ -95,7 +100,8 @@ class WorkflowTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.dir) + ":" + os.environ["PATH"],
                         FIXTURE=str(self.fixture), RUNNER_TEMP=str(self.dir), REGISTRY=REGISTRY,
                         HOME=str(self.dir), GITHUB_REF="refs/heads/main", DEFAULT_BRANCH="main", SHA="new", NAMESPACE="ns", DEPLOYMENTS='["server"]', HEALTH="[]",
-                        MANIFESTS="", HAS_MANIFESTS="false")
+                        MANIFESTS="", HAS_MANIFESTS="false", GITHUB_ENV=str(self.dir / "github-env"),
+                        USER_NAME=subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip())
         (self.dir / "k3s-deployments.txt").write_text("ns server\n")
         (self.dir / "k3s-revisions.txt").write_text("ns server 11\n")
         (self.dir / "k3s-configmaps.jsonl").write_text('{"kind":"ConfigMap","metadata":{"name":"config"}}\n')
@@ -110,6 +116,9 @@ class WorkflowTests(unittest.TestCase):
                                 env=self.env, capture_output=True, text=True, timeout=10)
         self.state = json.loads(self.fixture.read_text())
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        github_env = Path(self.env["GITHUB_ENV"])
+        if github_env.exists():
+            self.env.update(line.split("=", 1) for line in github_env.read_text().splitlines())
         return result
 
     def resolve(self, images=None):
