@@ -318,18 +318,18 @@ jobs:
             # A worker another controller scales from 0 has no pods to check until it wakes.
             if [[ $(jq '.spec.replicas' <<<"$dep") == 0 ]]; then echo "$ns/$name scaled to 0"; continue; fi
             selector=$(jq -er '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")' <<<"$dep")
-            # Ignore terminal pods left by older ReplicaSets. Every remaining pod
-            # is Running and ready with the template's commit-pinned images.
+            # Ignore terminal pods and pods still draining (preStop) from older
+            # ReplicaSets. Every remaining pod is Running and ready with the
+            # template's commit-pinned images.
             k3s kubectl -n "$ns" get pods -l "$selector" -o json \
               | jq -L "$RUNNER_TEMP" -e --argjson tpl "$(jq -c '[.spec.template.spec.containers[].image]' <<<"$dep")" \
                      --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
                   include "k3s-images";
-                  .items |= map(select(.status.phase != "Failed" and .status.phase != "Succeeded"))
+                  .items |= map(select(.status.phase != "Failed" and .status.phase != "Succeeded" and .metadata.deletionTimestamp == null))
                   | all($tpl[]; . as $ref | all($images[0][]; .repository != ($ref | repository) or .ref == $ref))
                   and (.items | length) > 0
                   and all(.items[]; . as $pod |
                     $pod.status.phase == "Running"
-                    and ($pod.metadata.deletionTimestamp == null)
                     and all($pod.spec.containers[]; . as $c | any($tpl[]; . == $c.image))
                     and (($pod.status.containerStatuses // []) | length == ($pod.spec.containers | length))
                     and all($pod.status.containerStatuses[]; .ready == true))' >/dev/null \

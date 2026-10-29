@@ -245,10 +245,13 @@ class WorkflowTests(unittest.TestCase):
         self.run_step("Roll back on failure", 1)
         self.assertNotIn("undo", self.state)
 
-    def test_verify_ignores_terminal_pods(self):
+    def test_verify_ignores_terminal_and_draining_pods(self):
         live = {"metadata": {}, "spec": {"containers": [{"image": REF}]},
                 "status": {"phase": "Running", "containerStatuses": [{"ready": True}]}}
-        self.state["pods"] = [live] + [{"status": {"phase": p}} for p in ("Failed", "Succeeded")]
+        draining = {"metadata": {"deletionTimestamp": "2026-01-01T00:00:00Z"},
+                    "spec": {"containers": [{"image": "old"}]},
+                    "status": {"phase": "Running", "containerStatuses": [{"ready": True}]}}
+        self.state["pods"] = [live, draining] + [{"status": {"phase": p}} for p in ("Failed", "Succeeded")]
         self.run_step("Verify the running pods")
         self.state["pods"][0]["status"]["containerStatuses"][0]["ready"] = False
         self.run_step("Verify the running pods", 1)
