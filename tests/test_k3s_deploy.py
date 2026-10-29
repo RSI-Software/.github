@@ -139,10 +139,24 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.sudo_calls(), [
             ["rmi", "--prune"],
             ["bud", "--isolation=chroot", "--layers", "--cache-ttl=168h", "--build-arg", "COMMIT=new",
-             "--build-arg", "MODE=prod", "-f", "deploy/Dockerfile", "-t", REF, "src"],
+             "--build-arg", "MODE=prod", "-f", "deploy/Dockerfile",
+             "-f", str(self.dir / "k3s-commit.Containerfile"), "-t", REF, "src"],
             ["push", "--authfile", "/etc/k3s-deploy/registry-auth.json", REF, "docker://" + REF]])
         self.run_step("Rotate the layer cache")
         self.assertEqual(self.state["store"], [REF])
+
+    def test_commit_only_change_appends_literal_final_stage_metadata(self):
+        for commit in ("a" * 40, "b" * 40):
+            self.env["SHA"] = commit
+            self.resolve([{"repository": APP, "build-args": f"COMMIT={commit}"}])
+            self.run_step("Build and push the images")
+            args = next(c for c in reversed(self.sudo_calls()) if c[0] == "bud")
+            files = [args[i + 1] for i, arg in enumerate(args) if arg == "-f"]
+            self.assertEqual(files, ["Dockerfile", str(self.dir / "k3s-commit.Containerfile")])
+            self.assertEqual(Path(files[-1]).read_text(), f"ENV COMMIT={commit}\n")
+            self.assertIn("--layers", args)
+            self.assertIn("--cache-ttl=168h", args)
+            self.assertNotIn("--no-cache", args)
 
     def test_next_deploy_drops_the_previous_build_and_prunes_weekly(self):
         self.run_step("Build and push the images")
