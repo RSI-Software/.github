@@ -17,8 +17,26 @@ body:
     id: observed
     attributes:
       label: Observed behavior
-      description: What did you do, and what visible result was wrong?
+      description: |
+        One or two sentences on what you ran and what broke. The title and this section claim only what the Evidence shows.
+        Each condition ("only X") needs a passing control in Evidence. Vary the input before naming a pattern; repeat before ruling out timing.
       placeholder: When I... the system...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: |
+        Show the failure from your own run, inline, never in details. Prose, paraphrase, retyped output, source links, and check results are not evidence.
+        Output: the exact command and its verbatim output in a fence (`bash` for shell).
+        Static visible state: a screenshot. Behavior: a recording from trigger to result. Agents upload with `ghb image PATH...`.
+        Crop tight, but keep the trigger and the result in one capture. One app: window. Several apps, hosts, or guests: monitor, every side in frame.
+        Keep every failing artifact; never overwrite one with the next attempt.
+        Missing media: say so here and to the user; file anyway.
+        Redact secrets and personal paths.
+      placeholder: Paste the failing output, or drag in a capture of the failure.
     validations:
       required: true
 
@@ -26,7 +44,7 @@ body:
     id: reproduction
     attributes:
       label: Minimal reproduction
-      description: Give the shortest deterministic sequence you know.
+      description: The shortest deterministic sequence, exactly as you ran it. Mark any step you did not run.
       placeholder: |
         1. Start from...
         2. Run or open...
@@ -43,14 +61,7 @@ body:
     id: suspected_cause
     attributes:
       label: Suspected cause and fix
-      description: One line. Put `path:line` citations in a collapsed Evidence block, or write Unverified.
-
-  - type: textarea
-    id: evidence
-    attributes:
-      label: Evidence
-      description: Add a focused log excerpt, trace, screenshot, or recording. Redact secrets and personal paths.
-      placeholder: Paste or drag supporting evidence here.
+      description: One line. Cite `path:line`, or write Unverified.
 
   - type: textarea
     id: environment
