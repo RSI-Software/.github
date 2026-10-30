@@ -18,6 +18,7 @@ Every workflow that starts a runner pod:
 8. **Rerun caller:** [rerun](rerun-lost-runner.md)
 9. **Title lint:** [PR title](pr-title.md), not CI
 10. **Workflow lint:** [actionlint](actionlint.md)
+11. **Stack lint:** [drift check](stack-lint.md)
 
 Org variables never reach private repos on GitHub Free, so each repo sets its own.
 Split a job only when part of it needs a different lane.
