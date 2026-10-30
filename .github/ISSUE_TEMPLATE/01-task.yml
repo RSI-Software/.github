@@ -25,7 +25,7 @@ body:
     id: context
     attributes:
       label: Context
-      description: What happens now, and why is this task needed?
+      description: What happens now, and why is this task needed? Show what happens now where you can, as verbatim output or a capture, never a description.
       placeholder: Today... This matters because...
 
   - type: textarea

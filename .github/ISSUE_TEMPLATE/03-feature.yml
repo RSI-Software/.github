@@ -26,7 +26,7 @@ body:
     id: gap
     attributes:
       label: Current gap
-      description: What happens today, and why is it insufficient?
+      description: What happens today, and why is it insufficient? Show what happens now where you can, as verbatim output or a capture, never a description.
       placeholder: Today... This prevents...
 
   - type: textarea
@@ -49,7 +49,7 @@ body:
     id: evidence
     attributes:
       label: Evidence or examples
-      description: Add a real screenshot, recording, reference, or comparable workflow when useful.
+      description: A real screenshot, recording, verbatim output, or comparable workflow. Inline, never in details.
       placeholder: Paste or drag supporting material here.
 
   - type: markdown

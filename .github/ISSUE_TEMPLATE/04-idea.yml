@@ -26,7 +26,7 @@ body:
     id: signal
     attributes:
       label: Signal
-      description: What observation, pain, or opportunity makes this worth considering?
+      description: What observation, pain, or opportunity makes this worth considering? Show the observation itself (output, a capture, or the source), never a paraphrase.
       placeholder: We observed... This may matter because...
 
   - type: textarea
