@@ -17,7 +17,9 @@ body:
     id: observed
     attributes:
       label: Observed behavior
-      description: One or two sentences on what you ran and what broke. The title and this section claim only what the Evidence shows.
+      description: |
+        One or two sentences on what you ran and what broke. The title and this section claim only what the Evidence shows.
+        Each condition ("only X") needs a passing control in Evidence. Vary the input before naming a pattern; repeat before ruling out timing.
       placeholder: When I... the system...
     validations:
       required: true
@@ -31,7 +33,6 @@ body:
         Output: the exact command and its verbatim output in a fence (`bash` for shell).
         Static visible state: a screenshot. Behavior: a recording from trigger to result. Agents upload with `ghb image PATH...`.
         Crop tight, but keep the trigger and the result in one capture. One app: window. Several apps, hosts, or guests: monitor, every side in frame.
-        Cases before claims: each condition ("only X") needs a passing control. Vary the input before naming a pattern; repeat before ruling out timing.
         Keep every failing artifact; never overwrite one with the next attempt.
         Missing media: say so here and to the user; file anyway.
         Redact secrets and personal paths.
