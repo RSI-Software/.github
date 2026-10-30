@@ -17,7 +17,7 @@ body:
     id: observed
     attributes:
       label: Observed behavior
-      description: What did you do, and what visible result was wrong?
+      description: One or two sentences on what you ran and what broke. The title and this section claim only what the Evidence shows.
       placeholder: When I... the system...
     validations:
       required: true
@@ -28,8 +28,11 @@ body:
       label: Evidence
       description: |
         Show the failure inline, never in details. Prose, paraphrase, source links, and check results are not evidence.
-        Output: a verbatim excerpt from your own run, never retyped or summarized.
+        Output: a verbatim excerpt from your own run in a fence (`bash` for shell), never retyped or summarized.
         UI/CLI/TUI failure: a recording or screenshot of it. Agents upload with `ghb image PATH...`.
+        Capture the real command and its effect together. One app: window. Host and guest, or several apps: monitor.
+        Cases before claims: every condition (only capitals, only one app) needs a control case that passes.
+        Vary the input before naming a pattern; repeat the call before ruling out timing.
         Keep every failing artifact; never overwrite one with the next attempt.
         Missing media: say so here and to the user; file anyway.
         Redact secrets and personal paths.
