@@ -30,7 +30,7 @@ body:
         Show the failure from your own run, inline, never in details. Prose, paraphrase, retyped output, source links, and check results are not evidence.
         Output: the exact command and its verbatim output in a fence (`bash` for shell).
         Static visible state: a screenshot. Behavior: a recording from trigger to result. Agents upload with `ghb image PATH...`.
-        Whole chain: trigger and result in one capture, nothing cropped or cut between. One app: window. Several apps, hosts, or guests: monitor, every side in frame.
+        Crop tight, but keep the trigger and the result in one capture. One app: window. Several apps, hosts, or guests: monitor, every side in frame.
         Cases before claims: each condition ("only X") needs a passing control. Vary the input before naming a pattern; repeat before ruling out timing.
         Keep every failing artifact; never overwrite one with the next attempt.
         Missing media: say so here and to the user; file anyway.
