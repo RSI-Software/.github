@@ -1,0 +1,82 @@
+name: Stack lint drift
+description: Check the caller's stack lint against RSI's authoritative rules
+inputs:
+  token:
+    description: Token with contents read access to the private RSI-Software/rsi repository
+    required: true
+  config:
+    description: Static Vite+ or Oxlint config, relative to the caller checkout
+    default: vite.config.ts
+runs:
+  using: composite
+  steps:
+    - name: Load caller lint config
+      shell: bash
+      env:
+        STACK_CONFIG: ${{ inputs.config }}
+      run: |
+        bun -e '
+          const { resolve } = require("node:path");
+          const config = (await import(resolve(process.env.STACK_CONFIG))).default;
+          if (!config || typeof config !== "object") throw new Error("Expected a static config object");
+          console.log(JSON.stringify(config.lint ?? config));
+        ' > "$RUNNER_TEMP/stack-lint.json"
+    - name: Compare authoritative stack rules
+      uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+      env:
+        STACK_CONFIG: ${{ inputs.config }}
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const response = await github.rest.repos.getContent({
+            owner: "RSI-Software", repo: "rsi", path: "stack.oxlintrc.json", ref: "main",
+          });
+          const canonical = JSON.parse(Buffer.from(response.data.content, "base64").toString());
+          const local = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, "stack-lint.json"), "utf8"));
+          function rules(config, directory) {
+            const inherited = (config.extends ?? []).map(base => {
+              if (typeof base !== "string") return rules(base, directory);
+              const file = path.resolve(directory, base);
+              return rules(JSON.parse(fs.readFileSync(file, "utf8")), path.dirname(file));
+            });
+            const own = Object.fromEntries(Object.entries(config.rules ?? {}).map(([key, value]) => [key.replace(/^eslint\//, ""), value]));
+            return Object.assign({}, ...inherited, own);
+          }
+          function normalize(value, key = "") {
+            if (Array.isArray(value)) return value.map(item => {
+              if (typeof item === "string" && ["paths", "globals"].includes(key)) return { name: item };
+              if (typeof item === "string" && key === "patterns") return { group: [item] };
+              return normalize(item);
+            });
+            if (value && typeof value === "object") return Object.fromEntries(
+              Object.entries(value).filter(([name]) => name !== "message").map(([name, item]) => [name, normalize(item, name)])
+            );
+            return value;
+          }
+          function includes(actual, expected) {
+            if (Array.isArray(expected)) return Array.isArray(actual) && expected.every(item => actual.some(candidate => includes(candidate, item)));
+            if (expected && typeof expected === "object") return actual && typeof actual === "object" &&
+              (!("name" in expected || "group" in expected) || Object.keys(actual).every(key => key in expected)) &&
+              Object.entries(expected).every(([key, value]) => includes(actual[key], value));
+            return actual === expected;
+          }
+          const severity = value => ({ off: 0, allow: 0, warn: 1, error: 2, deny: 2 })[value] ?? value;
+          const actualRules = rules(local, path.dirname(path.resolve(process.env.STACK_CONFIG)));
+          const expectedRules = rules(canonical, ".");
+          if (!Object.keys(expectedRules).length) throw new Error("Authoritative stack has no rules");
+          const drift = [];
+          for (const [name, expected] of Object.entries(expectedRules)) {
+            const wanted = Array.isArray(expected) ? expected : [expected];
+            const actual = Array.isArray(actualRules[name]) ? actualRules[name] : [actualRules[name]];
+            const options = name === "no-restricted-globals" ? "globals" : "";
+            const actualOptions = normalize(actual.slice(1), options);
+            const wantedOptions = normalize(wanted.slice(1), options);
+            const restrictions = ["no-restricted-globals", "no-restricted-imports"].includes(name);
+            if (severity(actual[0]) !== severity(wanted[0]) || !includes(actualOptions, wantedOptions) ||
+                (!restrictions && !includes(wantedOptions, actualOptions))) drift.push(name);
+          }
+          core.info(`Authoritative stack: RSI-Software/rsi@main stack.oxlintrc.json (${response.data.sha})`);
+          if (drift.length) core.setFailed(`Stack lint drift: ${drift.join(", ")}. Align ${process.env.STACK_CONFIG} with RSI's stack.oxlintrc.json.`);
+          else core.info(`Stack lint aligned: ${Object.keys(expectedRules).length} rules`);
