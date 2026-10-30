@@ -23,10 +23,25 @@ body:
       required: true
 
   - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: |
+        Show the failure inline, never in details. Prose, paraphrase, source links, and check results are not evidence.
+        Output: a verbatim excerpt from your own run, never retyped or summarized.
+        UI/CLI/TUI failure: a recording or screenshot of it. Agents upload with `ghb image PATH...`.
+        Keep every failing artifact; never overwrite one with the next attempt.
+        Missing media: say so here and to the user; file anyway.
+        Redact secrets and personal paths.
+      placeholder: Paste the failing output, or drag in a capture of the failure.
+    validations:
+      required: true
+
+  - type: textarea
     id: reproduction
     attributes:
       label: Minimal reproduction
-      description: Give the shortest deterministic sequence you know.
+      description: The shortest deterministic sequence, exactly as you ran it. Mark any step you did not run.
       placeholder: |
         1. Start from...
         2. Run or open...
@@ -43,14 +58,7 @@ body:
     id: suspected_cause
     attributes:
       label: Suspected cause and fix
-      description: One line. Put `path:line` citations in a collapsed Evidence block, or write Unverified.
-
-  - type: textarea
-    id: evidence
-    attributes:
-      label: Evidence
-      description: Add a focused log excerpt, trace, screenshot, or recording. Redact secrets and personal paths.
-      placeholder: Paste or drag supporting evidence here.
+      description: One line. Cite `path:line`, or write Unverified.
 
   - type: textarea
     id: environment
