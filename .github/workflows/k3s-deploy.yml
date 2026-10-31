@@ -1,78 +1,35 @@
-# The one release route for k3s apps: build the caller's commit, push to the
-# cluster registry, render/apply manifests, run Jobs, watch rollouts and smoke
-# /health. Every node pulls built images with IfNotPresent; rollback preflights
-# the registry before undoing the revision and restoring ConfigMap data.
-# Registry retention is owned by infra (the latest 10 pushed tags per repo).
+# The release route for k3s apps: build once on a CI lane, push to zot, render the
+# manifests with the pushed digests, and post them to k3s-hq in one OIDC-signed call.
+# No buildah, kubectl or kubeconfig. Callers and contract: docs/k3s-deploy.md.
 #
-# Layer cache: each runner user owns a root buildah store that keeps its
-# repository's latest build (layers up to a week old), so a build rewrites only
-# the layers its change touches, and the registry and nodes receive only those.
-# Runners on one node never share a store: one repository's prune or rotation
-# never evicts another's cache or races its build. Only default-branch deploys
-# build here; PR image checks run on ephemeral CI runners.
-#
-# Runner-host contract: buildah, jq, curl and k3s kubectl on PATH; deployer
-# kubeconfig supplied by the caller. Buildah marks 192.168.1.231:5002 insecure;
-# anonymous pulls work on every node. Push credentials are root-only on disk.
-# The runner unit allows writes to /var/lib/containers and /run/containers.
-# Exact sudoers lines, with STORE the runner user's store
-# (--root /var/lib/containers/k3s-deploy/USER --runroot /run/containers/k3s-deploy/USER):
-# /usr/bin/buildah STORE bud *
-# /usr/bin/buildah STORE push --authfile /etc/k3s-deploy/registry-auth.json 192.168.1.231\:5002/* docker\://192.168.1.231\:5002/*
-# /usr/bin/buildah STORE rmi --force 192.168.1.231\:5002/*
-# /usr/bin/buildah STORE rmi --prune
+# Layer cache: each repository keeps `<repository>:cache` in zot, max mode, on top of
+# the node-local buildkitd-main cache. Any ARC job can push it, as any branch could
+# `sudo buildah` on the old path; what runs is the digest this job built and k3s-hq pins.
 name: k3s deploy
 
 on:
   workflow_call:
     inputs:
-      runner:
-        description: Label of the app's node runner, appended to self-hosted (the repo-scoped runner per app)
-        required: true
-        type: string
-      namespace:
-        description: Default namespace for objects that name none, and for `deployments`
+      app:
+        description: k3s-hq app record name; the record's repository must be the caller
         required: true
         type: string
       images:
         description: >-
           JSON array of images to build, e.g.
-          [{"repository": "docker.io/library/render-api", "dockerfile": "deploy/Dockerfile", "context": ".", "build-args": "COMMIT=..."}].
-          Tag is the full commit SHA unless "tag" is set; a set tag already in the cluster registry is not rebuilt.
+          [{"repository": "render-api", "dockerfile": "deploy/Dockerfile", "context": ".", "build-args": "COMMIT=..."}].
+          Each pushes as 192.168.1.231:5002/<repository>:<commit>; repository carries no tag.
         required: true
         type: string
       manifests:
         description: >-
-          Shell command, run in the checkout, that writes the app's manifests into $K3S_DEPLOY_OUT
-          ($K3S_DEPLOY_SHA is set). Every image of a built repository uses its registry ref
-          with IfNotPresent; Jobs run to completion first, then the rest applies server-side.
-        required: false
-        type: string
-        default: ""
-      deployments:
-        description: 'JSON array of Deployment names to set images on, when there is no `manifests` command, e.g. ["render-server"]'
-        required: false
-        type: string
-        default: "[]"
-      health:
-        description: >-
-          JSON array of smokes curled from the runner, e.g.
-          [{"url": "http://127.0.0.1:30882/api/health", "commit": ".commit"}];
-          "commit" is a jq filter on the body that must yield this commit (12+ hex chars, prefix match).
-        required: false
-        type: string
-        default: "[]"
-      kubeconfig:
-        description: Absolute path on the runner host of the deployer kubeconfig
+          Shell command, run in the checkout, that writes the app's YAML or JSON manifests into
+          $K3S_DEPLOY_OUT ($K3S_DEPLOY_SHA is set). Each image of a built repository becomes its
+          pushed digest; every other image must already be by digest.
         required: true
         type: string
-      rollout-timeout:
-        description: Timeout for each Job and each rollout status
-        required: false
-        type: string
-        default: 10m
       timeout-minutes:
-        description: Job timeout; raise it when a pod drains for long on shutdown
+        description: Job timeout; cover a cold build plus the release's migrations and rollouts
         required: false
         type: number
         default: 30
@@ -81,71 +38,79 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
-    runs-on: [self-hosted, "${{ inputs.runner }}"]
+  release:
+    # A plain ARC pod: buildkitd, zot and the LAN k3s.rsi.nz are reachable from inside the cluster.
+    runs-on: ci
     timeout-minutes: ${{ inputs.timeout-minutes }}
-    # One deploy at a time per app, across branches and reruns.
+    # One release at a time per app; k3s-hq refuses another commit's while one runs.
     concurrency:
-      group: k3s-deploy-${{ github.repository }}
+      group: k3s-deploy-${{ github.repository }}-${{ inputs.app }}
       cancel-in-progress: false
     permissions:
       contents: read
+      id-token: write
     env:
-      KUBECONFIG: ${{ inputs.kubeconfig }}
-      NAMESPACE: ${{ inputs.namespace }}
+      APP: ${{ inputs.app }}
       SHA: ${{ github.sha }}
       REGISTRY: 192.168.1.231:5002
+      RELEASES: https://k3s.rsi.nz/api/releases
     steps:
-      - name: Check out the commit under deploy
+      - name: Check the inputs
+        env:
+          IMAGES: ${{ inputs.images }}
+        run: |
+          set -euo pipefail
+          # k3s-hq admits only main's tokens; fail before building.
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "k3s-hq releases only refs/heads/main, not $GITHUB_REF" >&2; exit 2
+          fi
+          jq -e 'type == "array" and length > 0 and all(.[];
+              .repository | type == "string" and length > 0 and (test("[@\\s]|:[^/]*$") | not))' <<<"$IMAGES" >/dev/null \
+            || { echo "images must be a non-empty array of {repository, dockerfile?, context?, build-args?}; repository carries no tag" >&2; exit 2; }
+          # Every image pushes to zot: drop any registry host and `library/`.
+          jq -c 'map(.repository |= (sub("^([^/]*[.:][^/]*|localhost)/"; "") | sub("^library/"; "")))' \
+            <<<"$IMAGES" > "$RUNNER_TEMP/k3s-images.json"
+
+      - name: Check out the commit under release
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Resolve the images
-        env:
-          IMAGES: ${{ inputs.images }}
-          DEPLOYMENTS: ${{ inputs.deployments }}
-          HEALTH: ${{ inputs.health }}
-          MANIFESTS: ${{ inputs.manifests }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      # The runner image bakes this version, so nothing downloads.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Build and push the images
         run: |
           set -euo pipefail
-          # Builds here feed the layer cache every later deploy reuses.
-          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
-            echo "k3s-deploy runs only from the default branch, not $GITHUB_REF" >&2; exit 2
+          if [[ -z "${RSI_REGISTRY_CONFIG:-}" || ! -r "$RSI_REGISTRY_CONFIG/config.json" ]]; then
+            echo "::error::ARC registry auth config is not mounted or readable"; exit 1
           fi
-          jq -e 'type == "array" and length > 0 and all(.[];
-              (.repository | type == "string" and length > 0 and (test("[@\\s]|:[^/]*$") | not))
-              and ((.tag // "x") | type == "string" and length > 0))' <<<"$IMAGES" >/dev/null \
-            || { echo "images must be a non-empty array of {repository, dockerfile?, context?, build-args?, tag?}; repository carries no tag" >&2; exit 2; }
-          jq -e 'type == "array" and all(.[]; type == "string")' <<<"$DEPLOYMENTS" >/dev/null \
-            || { echo "deployments must be a JSON array of names" >&2; exit 2; }
-          jq -e 'type == "array" and all(.[]; (.url | type == "string") and (.commit | type == "string"))' <<<"$HEALTH" >/dev/null \
-            || { echo "health must be a JSON array of {url, commit}" >&2; exit 2; }
-          if [[ -z "$MANIFESTS" && "$DEPLOYMENTS" == "[]" ]]; then
-            echo "set manifests or deployments: nothing would roll out" >&2; exit 2
-          fi
-          # The runner user's own buildah store; its sudoers lines name it exactly.
-          echo "STORE=k3s-deploy/$(id -un)" >> "$GITHUB_ENV"
-          # One image mapping for manifests, deployments and rollback checks.
-          cat > "$RUNNER_TEMP/k3s-images.jq" <<'JQ'
-          def repository:
-            sub("@.*$"; "") | sub(":[^:/]*$"; "")
-            | sub("^([^/]*[.:][^/]*|localhost)/"; "") | sub("^library/"; "");
-          def pin($images):
-            walk(if type == "object" and (.image | type) == "string" then
-              (.image | repository) as $repo
-              | ([$images[] | select(.repository == $repo)] | first) as $image
-              | if $image != null then .image = $image.ref | .imagePullPolicy = "IfNotPresent" else . end
-            else . end);
-          JQ
-          jq -L "$RUNNER_TEMP" -c --arg sha "$SHA" --arg registry "$REGISTRY" '
-            include "k3s-images";
-            map(.repository |= repository | . + {ref: "\($registry)/\(.repository):\(.tag // $sha)"})' \
-            <<<"$IMAGES" > "$RUNNER_TEMP/k3s-images.json"
+          export DOCKER_CONFIG="$RSI_REGISTRY_CONFIG" BUILDX_CONFIG="$RUNNER_TEMP/buildx"
+          docker buildx create --name k3s-deploy --driver remote tcp://buildkitd-main.buildkit.svc.cluster.local:1234 --use
+          : > "$RUNNER_TEMP/k3s-built.jsonl"
+          while IFS= read -r img; do
+            ref="$REGISTRY/$(jq -r .repository <<<"$img")"
+            args=()
+            while IFS= read -r pair; do
+              if [[ -n "$pair" ]]; then args+=(--build-arg "$pair"); fi
+            done < <(jq -r '.["build-args"] // ""' <<<"$img")
+            echo "Building $ref:$SHA"
+            # A cache export failure never fails the release.
+            docker buildx build "$(jq -r '.context // "."' <<<"$img")" \
+              --file "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" "${args[@]}" \
+              --platform linux/amd64 --provenance=false \
+              --cache-from "type=registry,ref=$ref:cache,registry.insecure=true" \
+              --cache-to "type=registry,ref=$ref:cache,mode=max,image-manifest=true,oci-mediatypes=true,registry.insecure=true,ignore-error=true" \
+              --output "type=image,name=$ref:$SHA,push=true,registry.insecure=true" \
+              --metadata-file "$RUNNER_TEMP/k3s-build.json"
+            digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/k3s-build.json")
+            jq -c --arg digest "$digest" '{repository, digest: $digest}' <<<"$img" >> "$RUNNER_TEMP/k3s-built.jsonl"
+            echo "$ref:$SHA is $ref@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+          done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-images.json")
 
       - name: Render the manifests
-        if: inputs.manifests != ''
         env:
           MANIFESTS: ${{ inputs.manifests }}
         run: |
@@ -153,279 +118,96 @@ jobs:
           out="$RUNNER_TEMP/k3s-manifests"
           rm -rf "$out" && mkdir -p "$out"
           K3S_DEPLOY_OUT="$out" K3S_DEPLOY_SHA="$SHA" bash -euo pipefail -c "$MANIFESTS"
-          find "$out" -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) | grep -q . \
-            || { echo "the manifests command wrote no manifests into \$K3S_DEPLOY_OUT" >&2; exit 1; }
-          k3s kubectl create --dry-run=client -o json -R -f "$out" \
-            | jq -cs '[.[] | if .kind == "List" then .items[] else . end]' > "$RUNNER_TEMP/k3s-raw.json"
-          jq -L "$RUNNER_TEMP" -c --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
-            include "k3s-images"; pin($images[0])' \
-            "$RUNNER_TEMP/k3s-raw.json" > "$RUNNER_TEMP/k3s-all.json"
-          jq -c 'map(select(.kind == "Job"))' "$RUNNER_TEMP/k3s-all.json" > "$RUNNER_TEMP/k3s-jobs.json"
-          jq -c '{apiVersion: "v1", kind: "List", items: map(select(.kind != "Job"))}' "$RUNNER_TEMP/k3s-all.json" > "$RUNNER_TEMP/k3s-apply.json"
-          jq -r '.[] | "\(.kind)/\(.metadata.name)"' "$RUNNER_TEMP/k3s-all.json"
-          # The server validates every object, admission and RBAC included,
-          # before anything changes.
-          k3s kubectl -n "$NAMESPACE" apply --server-side --force-conflicts --field-manager=k3s-deploy \
-            --dry-run=server -f "$RUNNER_TEMP/k3s-apply.json" >/dev/null
+          K3S_DEPLOY_OUT="$out" bun run - <<'TS'
+          const { APP, REGISTRY, RUNNER_TEMP, K3S_DEPLOY_OUT } = process.env as Record<string, string>;
+          const fail = (message: string): never => {
+            console.log(`::error::${message}`);
+            process.exit(1);
+          };
+          /** A ref's repository, without registry host, tag, digest or `library/`. */
+          const repository = (ref: string) =>
+            ref
+              .replace(/@.*$/, "")
+              .replace(/:[^:/]*$/, "")
+              .replace(/^([^/]*[.:][^/]*|localhost)\//, "")
+              .replace(/^library\//, "");
+          const built = new Map<string, string>();
+          for (const line of (await Bun.file(`${RUNNER_TEMP}/k3s-built.jsonl`).text()).split("\n")) {
+            if (!line) continue;
+            const { repository: name, digest } = JSON.parse(line);
+            built.set(repository(name), `${REGISTRY}/${name}@${digest}`);
+          }
+          const objects: Record<string, any>[] = [];
+          const files = [...new Bun.Glob("**/*.{yaml,yml,json}").scanSync(K3S_DEPLOY_OUT)].sort();
+          for (const file of files) {
+            // A multi-document file parses to an array; JSON is YAML.
+            const parsed = Bun.YAML.parse(await Bun.file(`${K3S_DEPLOY_OUT}/${file}`).text());
+            for (const doc of [parsed].flat()) {
+              if (doc == null) continue;
+              objects.push(...(doc.kind === "List" ? (doc.items ?? []) : [doc]));
+            }
+          }
+          if (!objects.length) fail("the manifests command wrote no manifests into $K3S_DEPLOY_OUT");
+          const used = new Set<string>();
+          const pin = (node: unknown): void => {
+            if (Array.isArray(node)) return node.forEach(pin);
+            if (typeof node !== "object" || node === null) return;
+            const object = node as Record<string, unknown>;
+            if (typeof object.image === "string") {
+              const ref = built.get(repository(object.image));
+              if (ref) {
+                object.image = ref;
+                used.add(ref);
+              }
+            }
+            Object.values(object).forEach(pin);
+          };
+          pin(objects);
+          for (const ref of built.values())
+            if (!used.has(ref)) console.log(`::warning::no manifest runs ${ref}`);
+          for (const o of objects) console.log(`${o.kind}/${o.metadata?.name}`);
+          await Bun.write(`${RUNNER_TEMP}/k3s-release.json`, JSON.stringify({ app: APP, objects }));
+          TS
 
-      - name: Record the Deployments
-        env:
-          DEPLOYMENTS: ${{ inputs.deployments }}
-          HAS_MANIFESTS: ${{ inputs.manifests != '' }}
+      # One call; the reply is NDJSON heartbeats ending in the result. A refusal, a failed
+      # result, or a stream that ends without a result turns this red. A rerun reposts:
+      # this commit's running or released release attaches.
+      - name: Release through k3s-hq
         run: |
           set -euo pipefail
-          if [[ "$HAS_MANIFESTS" == true ]]; then
-            jq -r --arg ns "$NAMESPACE" '.items[] | select(.kind == "Deployment") | "\(.metadata.namespace // $ns) \(.metadata.name)"' \
-              "$RUNNER_TEMP/k3s-apply.json"
-          else
-            jq -r --arg ns "$NAMESPACE" '.[] | "\($ns) \(.)"' <<<"$DEPLOYMENTS"
-          fi > "$RUNNER_TEMP/k3s-deployments.txt"
-          # The revision before this deploy: rollback undoes only what moved.
-          : > "$RUNNER_TEMP/k3s-revisions.txt"
-          while read -r ns name; do
-            rev=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found \
-              -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
-            echo "$ns $name ${rev:-none}" >> "$RUNNER_TEMP/k3s-revisions.txt"
-          done < "$RUNNER_TEMP/k3s-deployments.txt"
-          cat "$RUNNER_TEMP/k3s-revisions.txt"
-          # Live ConfigMaps this deploy changes: rollback restores their data,
-          # since pods rolled back still mount the same objects.
-          : > "$RUNNER_TEMP/k3s-configmaps.jsonl"
-          if [[ "$HAS_MANIFESTS" == true ]]; then
-            jq -r --arg ns "$NAMESPACE" '.items[] | select(.kind == "ConfigMap") | "\(.metadata.namespace // $ns) \(.metadata.name)"' \
-              "$RUNNER_TEMP/k3s-apply.json" | while read -r ns name; do
-              k3s kubectl -n "$ns" get configmap "$name" --ignore-not-found -o json \
-                | jq -c '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace}, data, binaryData} | with_entries(select(.value != null))'
-            done >> "$RUNNER_TEMP/k3s-configmaps.jsonl"
+          if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+            echo "::error::no OIDC token: the calling job grants id-token: write"; exit 1
           fi
-
-      - name: Build and push the images
-        id: build
-        run: |
-          set -euo pipefail
-          : > "$RUNNER_TEMP/k3s-built.txt"
-          # Buildah keys ARG by name and ENV by its unexpanded instruction.
-          # Append a literal ENV in the final stage: only this metadata step
-          # misses cache when the commit changes, even if all files are identical.
-          printf 'ENV COMMIT=%s\n' "$SHA" > "$RUNNER_TEMP/k3s-commit.Containerfile"
-          buildah() { sudo /usr/bin/buildah --root "/var/lib/containers/$STORE" --runroot "/run/containers/$STORE" "$@"; }
-          # Weekly, before building, drop dangling images from this runner's
-          # store: superseded build stages and failed builds. This build's
-          # stages then seed the cache.
-          mkdir -p "$HOME/.cache/k3s-deploy"
-          if [[ -z $(find "$HOME/.cache/k3s-deploy/pruned" -mtime -7 2>/dev/null) ]]; then
-            # A refused prune never fails the deploy.
-            buildah rmi --prune || echo "::warning::buildah prune skipped images in use by other containers"
-            touch "$HOME/.cache/k3s-deploy/pruned"
-          fi
-          while IFS= read -r img; do
-            ref=$(jq -r .ref <<<"$img")
-            if [[ $(jq -r '.tag != null' <<<"$img") == true ]] \
-              && curl -sfI --connect-timeout 5 --max-time 15 \
-                -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-                "http://$REGISTRY/v2/$(jq -r .repository <<<"$img")/manifests/$(jq -r .tag <<<"$img")" >/dev/null; then
-              echo "$ref already in the registry; not rebuilt"
-              continue
-            fi
-            build_args=()
-            while IFS= read -r pair; do
-              if [[ -n "$pair" ]]; then build_args+=(--build-arg "$pair"); fi
-            done < <(jq -r '.["build-args"] // ""' <<<"$img")
-            echo "Building $ref"
-            # chroot isolation survives the runner's hardened systemd unit.
-            # Cached layers older than a week rebuild, so RUN steps pick up updates.
-            buildah bud --isolation=chroot --layers --force-rm --cache-ttl=168h "${build_args[@]}" \
-              -f "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" \
-              -f "$RUNNER_TEMP/k3s-commit.Containerfile" -t "$ref" "$(jq -r '.context // "."' <<<"$img")"
-            # A built image is its repository's next cache, pushed or not.
-            echo "$ref" >> "$RUNNER_TEMP/k3s-built.txt"
-            buildah push --authfile /etc/k3s-deploy/registry-auth.json "$ref" "docker://$ref"
-          done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-images.json")
-
-      # Each repository keeps its latest build as the layer cache. Removing the
-      # previous one drops every layer that no other image still uses.
-      - name: Rotate the layer cache
-        if: always() && steps.build.outcome != 'skipped' && steps.build.outcome != ''
-        run: |
-          set -euo pipefail
-          buildah() { sudo /usr/bin/buildah --root "/var/lib/containers/$STORE" --runroot "/run/containers/$STORE" "$@"; }
-          while IFS= read -r ref; do
-            repo=${ref#"$REGISTRY/"}
-            repo=${repo%:*}
-            last="$HOME/.cache/k3s-deploy/last-${repo//\//_}"
-            if [[ -f "$last" ]] && previous=$(<"$last") && [[ "$previous" != "$ref" ]]; then
-              buildah rmi --force "$previous" \
-                || echo "::warning::could not remove the previous build $previous"
-            fi
-            echo "$ref" > "$last"
-          done < "$RUNNER_TEMP/k3s-built.txt"
-
-      # Jobs (migrations) finish before any Deployment changes; a failed Job
-      # stops the deploy with the running pods untouched.
-      - name: Run the Jobs
-        if: inputs.manifests != ''
-        env:
-          TIMEOUT: ${{ inputs.rollout-timeout }}
-        run: |
-          set -euo pipefail
-          while IFS= read -r job; do
-            ns=$(jq -r --arg ns "$NAMESPACE" '.metadata.namespace // $ns' <<<"$job")
-            name=$(jq -r .metadata.name <<<"$job")
-            echo "Running Job $ns/$name"
-            k3s kubectl -n "$ns" delete job "$name" --ignore-not-found --wait=true
-            k3s kubectl -n "$ns" apply --server-side --force-conflicts --field-manager=k3s-deploy -f - <<<"$job"
-            # Done means a Complete or Failed condition; `timeout` bounds the wait.
-            # shellcheck disable=SC2016 # the inner script expands its own arguments
-            timeout "$TIMEOUT" bash -c '
-              until conds=$(k3s kubectl -n "$0" get job "$1" -o jsonpath="{.status.conditions[?(@.status==\"True\")].type}") \
-                && [[ " $conds " == *" Complete "* || " $conds " == *" Failed "* ]]; do sleep 5; done' "$ns" "$name" || true
-            if [[ $(k3s kubectl -n "$ns" get job "$name" -o jsonpath='{.status.succeeded}') == 1 ]]; then
-              echo "Job $ns/$name complete"
-            else
-              k3s kubectl -n "$ns" logs "job/$name" --tail=100 || true
-              echo "::error::Job $ns/$name did not complete; nothing rolled out"
-              exit 1
-            fi
-          done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-jobs.json")
-
-      # Past this point Deployments change: later failures attempt a safe rollback.
-      - name: Apply
-        id: apply
-        env:
-          HAS_MANIFESTS: ${{ inputs.manifests != '' }}
-        run: |
-          set -euo pipefail
-          if [[ "$HAS_MANIFESTS" == true ]]; then
-            k3s kubectl -n "$NAMESPACE" apply --server-side --force-conflicts --field-manager=k3s-deploy \
-              -f "$RUNNER_TEMP/k3s-apply.json"
+          token=$(curl -sSf --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=k3s-hq" | jq -er .value)
+          echo "::add-mask::$token"
+          log="$RUNNER_TEMP/k3s-release.ndjson"
+          headers="$RUNNER_TEMP/k3s-release.headers"
+          # A silent minute is a lost stream: heartbeats come every 3s. One in 20 prints.
+          set +e
+          curl -sS -N --connect-timeout 10 --speed-limit 1 --speed-time 60 -D "$headers" \
+            -H @- -H 'Content-Type: application/json' \
+            --data-binary @"$RUNNER_TEMP/k3s-release.json" "$RELEASES" <<<"Authorization: Bearer $token" \
+            | tee "$log" | awk '/"state":"running"/ { if (n++ % 20) next } { print; fflush() }'
+          sent=${PIPESTATUS[0]}
+          set -e
+          status=$(awk 'toupper($1) ~ /^HTTP\// { code = $2 } END { print code }' "$headers" 2>/dev/null || true)
+          last=$(grep -v '^[[:space:]]*$' "$log" 2>/dev/null | tail -n 1 || true)
+          if jq -e '.state == "released"' <<<"$last" >/dev/null 2>&1; then
+            echo "Released $APP at $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          while read -r ns name; do
-            dep=$(k3s kubectl -n "$ns" get deployment "$name" -o json)
-            patch=$(jq -L "$RUNNER_TEMP" -c --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
-              include "k3s-images";
-              if any((.spec.template.spec.containers + (.spec.template.spec.initContainers // []))[];
-                .image as $ref | any($images[0][]; .repository == ($ref | repository)))
-              then pin($images[0]) | {spec: {template: {spec: .spec.template.spec}}}
-              else error("deployment runs none of the built images") end' <<<"$dep")
-            k3s kubectl -n "$ns" patch "deployment/$name" --type=merge -p "$patch"
-          done < "$RUNNER_TEMP/k3s-deployments.txt"
-
-      - name: Watch the rollouts
-        env:
-          TIMEOUT: ${{ inputs.rollout-timeout }}
-        run: |
-          set -euo pipefail
-          while read -r ns name; do
-            k3s kubectl -n "$ns" rollout status "deployment/$name" --timeout="$TIMEOUT"
-          done < "$RUNNER_TEMP/k3s-deployments.txt"
-
-      - name: Verify the running pods
-        run: |
-          set -euo pipefail
-          while read -r ns name; do
-            dep=$(k3s kubectl -n "$ns" get deployment "$name" -o json)
-            # A worker another controller scales from 0 has no pods to check until it wakes.
-            if [[ $(jq '.spec.replicas' <<<"$dep") == 0 ]]; then echo "$ns/$name scaled to 0"; continue; fi
-            selector=$(jq -er '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")' <<<"$dep")
-            # Ignore terminal pods and pods still draining (preStop) from older
-            # ReplicaSets. Every remaining pod is Running and ready with the
-            # template's commit-pinned images.
-            k3s kubectl -n "$ns" get pods -l "$selector" -o json \
-              | jq -L "$RUNNER_TEMP" -e --argjson tpl "$(jq -c '[.spec.template.spec.containers[].image]' <<<"$dep")" \
-                     --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
-                  include "k3s-images";
-                  .items |= map(select(.status.phase != "Failed" and .status.phase != "Succeeded" and .metadata.deletionTimestamp == null))
-                  | all($tpl[]; . as $ref | all($images[0][]; .repository != ($ref | repository) or .ref == $ref))
-                  and (.items | length) > 0
-                  and all(.items[]; . as $pod |
-                    $pod.status.phase == "Running"
-                    and all($pod.spec.containers[]; . as $c | any($tpl[]; . == $c.image))
-                    and (($pod.status.containerStatuses // []) | length == ($pod.spec.containers | length))
-                    and all($pod.status.containerStatuses[]; .ready == true))' >/dev/null \
-              || { echo "$ns/$name pods do not all serve this commit's images" >&2; exit 1; }
-            echo "$ns/$name serves $SHA"
-          done < "$RUNNER_TEMP/k3s-deployments.txt"
-
-      - name: Smoke /health for the commit
-        if: inputs.health != '[]'
-        env:
-          HEALTH: ${{ inputs.health }}
-        run: |
-          set -euo pipefail
-          while IFS= read -r check; do
-            url=$(jq -r .url <<<"$check")
-            filter=$(jq -r .commit <<<"$check")
-            got=""
-            for _ in $(seq 1 24); do
-              if body=$(curl -fsS --connect-timeout 5 --max-time 10 "$url" 2>/dev/null) \
-                && got=$(jq -er "$filter" <<<"$body" 2>/dev/null) \
-                && [[ ${#got} -ge 12 && ( "$SHA" == "$got"* || "$got" == "$SHA"* ) ]]; then
-                echo "$url reports $got"
-                continue 2
-              fi
-              sleep 5
-            done
-            echo "::error::$url never reported $SHA (last: ${got:-no answer})"
-            exit 1
-          done < <(jq -c '.[]' <<<"$HEALTH")
-
-      - name: Roll back on failure
-        if: failure() && steps.apply.outcome != 'skipped' && steps.apply.outcome != ''
-        run: |
-          set -uo pipefail
-          # Preflight the whole rollback before restoring shared ConfigMap data.
-          # An unsafe target leaves the current Deployments and ConfigMaps intact.
-          : > "$RUNNER_TEMP/k3s-rollback.txt" || exit 1
-          while read -r ns name before; do
-            if ! dep=$(k3s kubectl -n "$ns" get deployment "$name" --ignore-not-found -o json); then
-              echo "::error::rollback skipped: cannot read $ns/$name"
-              exit 1
-            fi
-            now=$(jq -r '.metadata.annotations["deployment.kubernetes.io/revision"] // ""' <<<"$dep")
-            if [[ "$before" == none ]]; then
-              echo "::warning::$ns/$name is new in this deploy; left in place"
-            elif [[ -n "$now" && "$now" != "$before" ]]; then
-              # Use the exact owned revision, not another Deployment's history.
-              if ! target=$(k3s kubectl -n "$ns" get replicasets -o json \
-                | jq -ce --arg uid "$(jq -r .metadata.uid <<<"$dep")" --arg rev "$before" '
-                    [.items[] | select(any(.metadata.ownerReferences[]?;
-                      .uid == $uid and .kind == "Deployment" and .controller == true))
-                    | select(.metadata.annotations["deployment.kubernetes.io/revision"] == $rev)]
-                    | if length == 1 then .[0].spec.template.spec
-                      else error("target revision unavailable or ambiguous") end'); then
-                echo "::error::rollback skipped: cannot resolve $ns/$name revision $before"
-                exit 1
-              fi
-              if ! refs=$(jq -L "$RUNNER_TEMP" -r --slurpfile images "$RUNNER_TEMP/k3s-images.json" '
-                include "k3s-images";
-                [(.containers + (.initContainers // []))[].image
-                  | . as $ref | select(any($images[0][]; .repository == ($ref | repository)))]
-                | unique | .[]' <<<"$target"); then
-                echo "::error::rollback skipped: cannot read $ns/$name revision $before images"
-                exit 1
-              fi
-              while IFS= read -r ref; do
-                [[ -n "$ref" ]] || continue
-                # Legacy node-import refs cannot be pulled from this registry.
-                path=${ref#*/}
-                if [[ "$path" == *@* ]]; then path=${path/@/\/manifests\/}; else path=${path/:/\/manifests\/}; fi
-                if [[ "$ref" != "$REGISTRY/"* ]] \
-                  || ! curl -sfI --connect-timeout 5 --max-time 15 \
-                    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
-                    "http://$REGISTRY/v2/$path" >/dev/null; then
-                  echo "::error::rollback skipped: $ns/$name revision $before image $ref unavailable in registry"
-                  exit 1
-                fi
-              done <<<"$refs"
-              echo "$ns $name $before" >> "$RUNNER_TEMP/k3s-rollback.txt" || exit 1
-            fi
-          done < "$RUNNER_TEMP/k3s-revisions.txt"
-          while IFS= read -r cm; do
-            k3s kubectl apply --server-side --force-conflicts --field-manager=k3s-deploy -f - <<<"$cm" \
-              && echo "::error::deploy failed; restored ConfigMap $(jq -r '"\(.metadata.namespace)/\(.metadata.name)"' <<<"$cm")"
-          done < "$RUNNER_TEMP/k3s-configmaps.jsonl"
-          while read -r ns name before; do
-            k3s kubectl -n "$ns" rollout undo "deployment/$name" --to-revision="$before" \
-              && echo "::error::deploy failed; rolled $ns/$name back to revision $before"
-          done < "$RUNNER_TEMP/k3s-rollback.txt"
+          if [[ "$sent" != 0 ]]; then
+            why="the reply ended without a result (curl exit $sent); rerun to attach"
+          elif [[ "$status" != 200 ]]; then
+            why="k3s-hq refused (HTTP ${status:-none}): ${last:-no body}"
+          elif jq -e '.state == "failed"' <<<"$last" >/dev/null 2>&1; then
+            why=$(jq -r '"failed at \(.stage // "start"), undo \(.undo): \(.error // "no error")"' <<<"$last")
+          elif jq -e 'has("error")' <<<"$last" >/dev/null 2>&1; then
+            why="k3s-hq lost the release status: $(jq -r .error <<<"$last"); rerun to attach"
+          else
+            why="the reply ended without a result; rerun to attach"
+          fi
+          echo "::error::$APP release: $why"
+          echo "$APP release: $why" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
