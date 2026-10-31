@@ -1,0 +1,3 @@
+# ARC scale sets: https://github.com/RSI-Software/.github/blob/main/docs/ci.md#lanes
+self-hosted-runner:
+  labels: [ci]
