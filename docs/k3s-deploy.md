@@ -31,6 +31,7 @@ k3s-hq then pins, migrates, rolls out, checks and undoes: [Releases](https://git
 - `app` is a **k3s-hq record** the caller owns
 - `prefix` sets the **tag namespace**, default `r`
 - `revision` **output**: the tag, e.g. `r12`
+- **Revision in**: build-arg and manifests env `K3S_DEPLOY_REVISION`, full tag
 - `contents: write` reaches **only the tag job**
 - **Pin a full SHA**; k3s-hq admits SHA or main
 - **Other images by digest**, or k3s-hq refuses
