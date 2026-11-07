@@ -12,6 +12,7 @@ permissions: {}
 jobs:
   rerun:
     if: contains(fromJSON('["failure", "cancelled"]'), github.event.workflow_run.conclusion)
+    # ci-policy: allow hosted reruns must start when every self-hosted runner is lost
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
