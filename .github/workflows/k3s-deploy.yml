@@ -20,12 +20,13 @@ on:
           JSON array of images to build, e.g.
           [{"repository": "render-api", "dockerfile": "deploy/Dockerfile", "context": ".", "build-args": "COMMIT=..."}].
           Each pushes as 192.168.1.231:5002/<repository>:<commit>; repository carries no tag.
+          Each build also gets build-arg K3S_DEPLOY_REVISION=<revision tag>, before its own build-args.
         required: true
         type: string
       manifests:
         description: >-
           Shell command, run in the checkout, that writes the app's YAML or JSON manifests into
-          $K3S_DEPLOY_OUT ($K3S_DEPLOY_SHA is set). Each image of a built repository becomes its
+          $K3S_DEPLOY_OUT ($K3S_DEPLOY_SHA and $K3S_DEPLOY_REVISION are set). Each image of a built repository becomes its
           pushed digest; every other image must already be by digest.
         required: true
         type: string
@@ -128,6 +129,7 @@ jobs:
     env:
       APP: ${{ inputs.app }}
       SHA: ${{ github.sha }}
+      K3S_DEPLOY_REVISION: ${{ needs.tag.outputs.revision }}
       REGISTRY: 192.168.1.231:5002
       RELEASES: https://k3s.rsi.nz/api/releases
     steps:
@@ -164,7 +166,8 @@ jobs:
           : > "$RUNNER_TEMP/k3s-built.jsonl"
           while IFS= read -r img; do
             ref="$REGISTRY/$(jq -r .repository <<<"$img")"
-            args=()
+            # The caller's own build-args come after, so they win.
+            args=(--build-arg "K3S_DEPLOY_REVISION=$K3S_DEPLOY_REVISION")
             while IFS= read -r pair; do
               if [[ -n "$pair" ]]; then args+=(--build-arg "$pair"); fi
             done < <(jq -r '.["build-args"] // ""' <<<"$img")

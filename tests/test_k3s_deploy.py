@@ -82,7 +82,7 @@ class WorkflowTests(unittest.TestCase):
         (self.dir / "registry").mkdir()
         (self.dir / "registry/config.json").write_text("{}")
         self.env = dict(os.environ, PATH=str(self.dir) + ":" + os.environ["PATH"], FIXTURE=str(self.fixture),
-                        RUNNER_TEMP=str(self.dir), REGISTRY=REGISTRY, APP="shop", SHA=SHA,
+                        RUNNER_TEMP=str(self.dir), REGISTRY=REGISTRY, APP="shop", SHA=SHA, K3S_DEPLOY_REVISION="r5",
                         GITHUB_REF="refs/heads/main", GITHUB_STEP_SUMMARY=str(self.dir / "summary"),
                         RSI_REGISTRY_CONFIG=str(self.dir / "registry"), RELEASES="https://k3s.example/api/releases",
                         ACTIONS_ID_TOKEN_REQUEST_URL="https://token.example/?v=1",
@@ -150,8 +150,8 @@ class WorkflowTests(unittest.TestCase):
         self.run_step("Build and push the images")
         build = next(c["args"] for c in self.state["calls"] if c["args"][:2] == ["buildx", "build"])
         ref = f"{REGISTRY}/shop"
-        self.assertEqual(build[2:9], ["src", "--file", "deploy/Dockerfile", "--build-arg", "COMMIT=x",
-                                      "--build-arg", "MODE=prod"])
+        self.assertEqual(build[2:11], ["src", "--file", "deploy/Dockerfile", "--build-arg", "K3S_DEPLOY_REVISION=r5",
+                                      "--build-arg", "COMMIT=x", "--build-arg", "MODE=prod"])
         self.assertIn(f"type=registry,ref={ref}:cache,registry.insecure=true", build)
         self.assertIn(f"type=registry,ref={ref}:cache,mode=max,image-manifest=true,oci-mediatypes=true,"
                       "registry.insecure=true,ignore-error=true", build)
@@ -183,12 +183,12 @@ class WorkflowTests(unittest.TestCase):
             kind: List
             items: [{{kind: Service, metadata: {{name: web}}}}]
             YAML
-            echo "{{\"kind\": \"ConfigMap\", \"metadata\": {{\"name\": \"$K3S_DEPLOY_SHA\"}}}}" > "$K3S_DEPLOY_OUT/z.json"
+            echo "{{\"kind\": \"ConfigMap\", \"metadata\": {{\"name\": \"$K3S_DEPLOY_SHA-$K3S_DEPLOY_REVISION\"}}}}" > "$K3S_DEPLOY_OUT/z.json"
         """)
         body = self.body()
         self.assertEqual(body["app"], "shop")
         self.assertEqual([o["kind"] for o in body["objects"]], ["Deployment", "Service", "ConfigMap"])
-        self.assertEqual(body["objects"][2]["metadata"]["name"], SHA)
+        self.assertEqual(body["objects"][2]["metadata"]["name"], f"{SHA}-r5")
         spec = body["objects"][0]["spec"]["template"]["spec"]
         self.assertEqual([c["image"] for c in spec["initContainers"] + spec["containers"]],
                          [f"{REGISTRY}/shop@{DIGEST}", f"{REGISTRY}/shop@{DIGEST}", pinned])
