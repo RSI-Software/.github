@@ -23,6 +23,7 @@ Every workflow that starts a runner pod:
 
 Org variables never reach private repos on GitHub Free, so each repo sets its own.
 Split a job only when part of it needs a different lane.
+The shared actionlint workflow **warns on drift** from this list: [policy](actionlint.md#policy).
 
 ## Lanes
 

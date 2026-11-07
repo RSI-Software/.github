@@ -1,6 +1,7 @@
 # Lints the caller's GitHub Actions workflows with pinned, checksum-verified
-# actionlint and shellcheck. Runs on the caller's RSI_CI_RUNNER, so private
-# repos bill no hosted minutes. Callers grant `contents: read`; see docs/actionlint.md.
+# actionlint and shellcheck, then warns on drift from the org CI checklist
+# (docs/ci.md). Runs on the caller's RSI_CI_RUNNER, so private repos bill no
+# hosted minutes. Callers grant `contents: read`; see docs/actionlint.md.
 name: actionlint
 
 on:
@@ -47,3 +48,192 @@ jobs:
           # SC2016 flags every intentionally single-quoted jq, awk or node script.
           SHELLCHECK_OPTS: --exclude=SC2016
         run: actionlint -color
+      # The runner image bakes this Bun, so setup-bun downloads nothing; Bun parses YAML.
+      # A failed setup only leaves the policy unchecked: the next step warns.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        with:
+          bun-version: 1.4.2
+      # One rule per docs/ci.md checklist item. Each warns until its id joins FAIL.
+      - name: Check CI policy
+        if: ${{ !cancelled() }}
+        env:
+          RSI_CI_RUNNER: ${{ vars.RSI_CI_RUNNER }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/ci-policy.js" <<'JS'
+          const fs = require("node:fs");
+          const FAIL = new Set([]); // Phase 5 (.github#66): rule ids that fail instead of warn
+          const NODE = "24.21.0", BUN = "1.4.2"; // baked in the runner image: docs/ci.md#toolchain
+          const K3S_MIN = "fdbf1c9e73dd98c410c7c66bbf9a41f1d6727cd9"; // minimum k3s-deploy pin: rsi#1198
+          const SELF = process.env.GITHUB_REPOSITORY === "RSI-Software/.github";
+          let findings = 0, failed = false;
+          function report(rule, wf, line, message) {
+            const level = FAIL.has(rule) ? "error" : "warning";
+            findings++;
+            failed ||= level === "error";
+            const at = wf ? ` file=${wf.file},line=${line},` : " ";
+            console.log(`::${level}${at}title=ci-policy ${rule}::${message}`);
+          }
+
+          // GitHub expressions, evaluated as JS against a synthetic event; unknown context is null.
+          const lower = (value) => String(value ?? "").toLowerCase();
+          const fns = {
+            contains: (a, b) => Array.isArray(a) ? a.some((x) => lower(x) === lower(b)) : lower(a).includes(lower(b)),
+            startsWith: (a, b) => lower(a).startsWith(lower(b)),
+            endsWith: (a, b) => lower(a).endsWith(lower(b)),
+            fromJSON: (s) => JSON.parse(s),
+            toJSON: (v) => JSON.stringify(v),
+            format: (f, ...a) => String(f).replace(/\{(\d+)\}/g, (_, i) => a[i]),
+            join: (a, s = ",") => [].concat(a).join(s),
+            hashFiles: () => "", always: () => true, failure: () => false, cancelled: () => false,
+          };
+          function evaluate(expr, ctx) {
+            if (typeof expr !== "string") return expr;
+            const source = expr.trim().replace(/^\$\{\{([\s\S]*)\}\}$/, "$1");
+            const js = source.replace(/'((?:[^']|'')*)'|([A-Za-z_][\w.-]*)(\s*\()?/g, (_, str, id, call) =>
+              str !== undefined ? JSON.stringify(str.replace(/''/g, "'"))
+              : call ? `(f[${JSON.stringify(id)}] ?? (() => null))(`
+              : ["true", "false", "null"].includes(id) ? id
+              : `get(${JSON.stringify(id)})`);
+            const get = (path) => path.split(".").reduce((o, k) => o?.[k], ctx) ?? null;
+            return new Function("get", "f", `return (${js});`)(get, { ...fns, success: () => ctx.needsOk });
+          }
+          // Whether a job starts under ctx: its needs ran and its if: holds. Unreadable if: counts as running.
+          function runs(wf, id, ctx) {
+            const job = wf.jobs[id];
+            const needsOk = [].concat(job.needs ?? []).every((n) => !wf.jobs[n] || runs(wf, n, ctx));
+            const cond = job.if ?? "success()";
+            try {
+              const status = /\b(always|success|failure|cancelled)\s*\(/.test(String(cond));
+              return Boolean(evaluate(cond, { ...ctx, needsOk })) && (status || needsOk);
+            } catch { return true; }
+          }
+          const vars = { RSI_CI_RUNNER: "ci" };
+          const pr = (pull_request) => ({ vars, github: { event_name: "pull_request", ref: "refs/pull/1/merge", event: { action: "synchronize", pull_request } } });
+          const DRAFT = pr({ draft: true, stack: null });
+          const LOWER = pr({ draft: false, stack: { position: 1, size: 2 } });
+          const MAIN = { vars, github: { event_name: "push", ref: "refs/heads/main", ref_name: "main", event: {} } };
+
+          const dir = ".github/workflows";
+          const workflows = (fs.existsSync(dir) ? fs.readdirSync(dir) : []).filter((f) => /\.ya?ml$/.test(f)).sort().flatMap((name) => {
+            const file = `${dir}/${name}`, text = fs.readFileSync(file, "utf8");
+            try {
+              const doc = Bun.YAML.parse(text) ?? {};
+              const on = typeof doc.on === "string" ? { [doc.on]: {} } : Array.isArray(doc.on) ? Object.fromEntries(doc.on.map((t) => [t, {}])) : doc.on ?? {};
+              return [{ file, text, lines: text.split("\n"), name: doc.name ?? file, doc, on, jobs: doc.jobs ?? {} }];
+            } catch (error) { report("parse", { file }, 1, `unreadable: ${error.message}`); return []; }
+          });
+          const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const lineOf = (wf, key) => wf.lines.findIndex((l) => new RegExp(`^\\s+["']?${escape(key)}["']?:\\s*(#.*)?$`).test(l)) + 1 || 1;
+          const allowed = (wf, rule) => new RegExp(`#\\s*ci-policy:\\s*allow\\s+${rule}\\s+\\S`).test(wf.text);
+          const shared = (uses, name) => new RegExp(`^(RSI-Software/\\.github/|\\./)\\.github/workflows/${escape(name)}(@|$)`).test(uses ?? "");
+          const calls = (name) => workflows.some((wf) => Object.values(wf.jobs).some((job) => shared(job.uses, name))
+            || (SELF && wf.file === `${dir}/${name}` && (wf.on.pull_request !== undefined || wf.on.push !== undefined)));
+          const readsTitle = (wf) => /pull_request\.title|changes\.title/.test(wf.text) || Object.values(wf.jobs).some((job) => shared(job.uses, "pr-title.yml"));
+          // runs-on labels, through one matrix key; a vars.RSI_CI_* lane resolves to rsi-k3s.
+          function labels(job) {
+            const text = JSON.stringify(job["runs-on"] ?? "");
+            if (/vars\.RSI_CI_(RUNNER|URGENT)/.test(text)) return null;
+            const key = /matrix\.([\w-]+)/.exec(text)?.[1];
+            return [].concat((key && job.strategy?.matrix?.[key]) || job["runs-on"] || []).map(String);
+          }
+          const hosted = (job) => labels(job)?.some((l) => /^(ubuntu|windows|macos)-/.test(l)) ?? false;
+          const steps = (job) => job.steps ?? [];
+          const install = /\b(bun|npm|pnpm|yarn)\s+(install|ci|i)\b/;
+
+          // 1. Repo variable
+          if (process.env.RSI_CI_RUNNER !== "ci") report("runner-var", null, 0, `repository variable RSI_CI_RUNNER is "${process.env.RSI_CI_RUNNER ?? ""}", not "ci": jobs run hosted`);
+
+          for (const wf of workflows) {
+            const pull = wf.on.pull_request !== undefined || wf.on.pull_request_target !== undefined;
+            const branches = wf.on.push?.branches;
+            const mainPush = wf.on.push !== undefined && (!branches || [].concat(branches).some((b) => ["main", "*", "**"].includes(b)));
+            // 5. main never cancels: workflow or job concurrency under a main push, or a call from one
+            const mainRuns = mainPush || wf.on.workflow_call !== undefined;
+            const cancelsMain = (c) => { try { return mainRuns && typeof c === "object" && Boolean(evaluate(c?.["cancel-in-progress"] ?? false, MAIN)); } catch { return true; } };
+            if (cancelsMain(wf.doc.concurrency)) report("main-cancel", wf, 1, "concurrency cancels runs on a main push; deploys drop mid-run");
+            const lanes = {};
+            for (const [id, job] of Object.entries(wf.jobs)) {
+              const line = lineOf(wf, id);
+              if (cancelsMain(job.concurrency)) report("main-cancel", wf, line, `${id}: concurrency cancels runs on a main push; deploys drop mid-run`);
+              if (job.uses) continue;
+              const text = JSON.stringify(job["runs-on"] ?? "");
+              const runner = labels(job);
+              // 3. Lane from RSI_CI_RUNNER; hosted and host runners need a written exception
+              if (runner && hosted(job)) { if (!allowed(wf, "hosted")) report("hosted", wf, line, `${id}: runs-on ${runner} bills hosted minutes; add "# ci-policy: allow hosted <reason>"`); }
+              else if (runner?.every((l) => /^ci(-docker|-heavy|-urgent)?$/.test(l))) report("lane", wf, line, `${id}: runs-on ${runner} hard-codes a lane; derive it from vars.RSI_CI_RUNNER`);
+              else if (runner && !allowed(wf, "host")) report("host", wf, line, `${id}: runs-on ${runner} is outside rsi-k3s; add "# ci-policy: allow host <reason>"`);
+              // 4. timeout-minutes
+              if (job["timeout-minutes"] === undefined) report("timeout", wf, line, `${id}: no timeout-minutes; a hang holds a slot 6 h, 3 times`);
+              // 5. Draft and lower stack layers start no pod; title lint runs every layer
+              if (pull && runs(wf, id, DRAFT)) report("skip-draft-stack", wf, line, `${id}: starts a runner on draft PRs`);
+              if (pull && !readsTitle(wf) && runs(wf, id, LOWER)) report("skip-draft-stack", wf, line, `${id}: starts a runner on lower stack layers`);
+              // An input that is one expression resolves against workflow and job env.
+              const env = { ...wf.doc.env, ...job.env };
+              const input = (v) => { try { return /^\$\{\{[\s\S]*\}\}$/.test(v) ? evaluate(v, { env }) ?? v : v; } catch { return v; } };
+              for (const step of steps(job)) {
+                const uses = step.uses ?? "", w = Object.fromEntries(Object.entries(step.with ?? {}).map(([k, v]) => [k, input(v)]));
+                // 6. Setup actions pin the baked toolchain
+                if (uses.startsWith("actions/setup-node@") && w["node-version"] !== undefined && String(w["node-version"]) !== NODE)
+                  report("toolchain", wf, line, `${id}: setup-node ${w["node-version"]} is not the baked ${NODE}; it downloads every run`);
+                if (uses.startsWith("oven-sh/setup-bun@") && w["bun-version-file"] === undefined && String(w["bun-version"]) !== BUN)
+                  report("toolchain", wf, line, `${id}: setup-bun ${w["bun-version"] ?? "latest"} is not the baked ${BUN}; it downloads every run`);
+                // 7. Shallow checkout
+                if ((uses.startsWith("actions/checkout@") && String(w["fetch-depth"]) === "0") || /(^|\s)--unshallow(\s|$)/m.test(step.run ?? ""))
+                  report("shallow", wf, line, `${id}: fetches full history; fetch only the base`);
+              }
+              // 2. One job: one checkout, one install per lane
+              if (steps(job).some((s) => install.test(s.run ?? ""))) (lanes[text] ??= []).push(id);
+            }
+            for (const ids of Object.values(lanes)) if (ids.length > 1)
+              report("one-job", wf, lineOf(wf, ids[1]), `${ids.join(", ")} each install on one lane; split a job only for a different lane`);
+            // 5. No edited trigger unless the workflow reads the title
+            if ([].concat(wf.on.pull_request?.types ?? []).includes("edited") && !readsTitle(wf))
+              report("no-edited", wf, 1, "pull_request types include edited; a body edit cancels or skips a real run");
+            // 9. Title lint, never commitlint: a step that runs it, by action or command
+            for (const [id, job] of Object.entries(wf.jobs)) if (steps(job).some((s) => /commitlint/i.test(s.uses ?? "") || /(^|[\s/])commitlint(\.sh)?(\s|$)/m.test(s.run ?? "")))
+              report("commitlint", wf, lineOf(wf, id), `${id}: runs commitlint; the shared PR title check replaces it`);
+          }
+
+          // 8. Rerun caller watches every workflow that starts a self-hosted runner
+          const rerun = workflows.filter((wf) => Object.values(wf.jobs).some((job) => shared(job.uses, "rerun-lost-runner.yml")));
+          const watched = new Set(rerun.flatMap((wf) => [].concat(wf.on.workflow_run?.workflows ?? [])));
+          const missing = workflows.filter((wf) => !rerun.includes(wf)
+            && Object.keys(wf.on).some((t) => t !== "workflow_call")
+            && Object.values(wf.jobs).some((job) => job.uses || !hosted(job))
+            && !watched.has(wf.name)).map((wf) => wf.name);
+          if (missing.length) report("rerun", rerun[0] ?? null, 1, rerun.length
+            ? `workflow_run.workflows misses ${missing.join(", ")}`
+            : `no rerun-lost-runner caller; it would watch ${missing.join(", ")}`);
+          // 9. Title lint through the shared PR title workflow
+          if (!calls("pr-title.yml")) report("pr-title", null, 0, "no caller of the shared pr-title workflow");
+          if (fs.readdirSync(".").some((f) => /^(\.commitlintrc|commitlint\.config)/.test(f))
+            || /"@commitlint\//.test(fs.existsSync("package.json") ? fs.readFileSync("package.json", "utf8") : ""))
+            report("commitlint", null, 0, "commitlint config or dependency; the shared PR title check replaces it");
+          // 10. Workflow lint
+          if (!calls("actionlint.yml")) report("actionlint", null, 0, "no caller of the shared actionlint workflow");
+          // 11. Stack lint, where the repository has a root lint config and is not the authority
+          if (["vite.config.ts", ".oxlintrc.json"].some((f) => fs.existsSync(f)) && !fs.existsSync("stack.oxlintrc.json")
+            && !workflows.some((wf) => Object.values(wf.jobs).some((job) => steps(job).some((s) => /^(RSI-Software\/\.github\/|\.\/)actions\/stack-lint(@|$)/.test(s.uses ?? "")))))
+            report("stack-lint", null, 0, "root lint config, but no RSI-Software/.github/actions/stack-lint step");
+          // k3s-deploy pins a full SHA at or above K3S_MIN
+          for (const wf of workflows) for (const [id, job] of Object.entries(wf.jobs)) {
+            const ref = /^RSI-Software\/\.github\/\.github\/workflows\/k3s-deploy\.yml@(.+)$/.exec(job.uses ?? "")?.[1];
+            if (!ref) continue;
+            if (!/^[0-9a-f]{40}$/.test(ref)) { report("k3s-pin", wf, lineOf(wf, id), `${id}: k3s-deploy@${ref}; pin a reviewed full SHA`); continue; }
+            const headers = process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {};
+            const status = await fetch(`https://api.github.com/repos/RSI-Software/.github/compare/${K3S_MIN}...${ref}`, { headers })
+              .then((r) => r.ok ? r.json() : {}).then((r) => r.status, () => undefined);
+            if (!["ahead", "identical"].includes(status))
+              report("k3s-pin", wf, lineOf(wf, id), `${id}: k3s-deploy@${ref.slice(0, 7)} is ${status ?? "unverified"} against minimum ${K3S_MIN.slice(0, 7)}`);
+          }
+          console.log(`ci-policy: ${findings} finding(s) in ${workflows.length} workflow(s)`);
+          process.exitCode = failed ? 2 : 0;
+          JS
+          # 2: a FAIL rule fired. Any other exit is a crash, which never fails the caller.
+          status=0
+          bun "$RUNNER_TEMP/ci-policy.js" || status=$?
+          [ "$status" -ne 2 ] || exit 2
+          [ "$status" -eq 0 ] || echo "::warning title=ci-policy::the policy check crashed (exit $status); rules unchecked"
