@@ -19,6 +19,7 @@ Every workflow that starts a runner pod:
 9. **Title lint:** [PR title](pr-title.md), not CI
 10. **Workflow lint:** [actionlint](actionlint.md)
 11. **Stack lint:** [drift check](stack-lint.md)
+12. **Test workers:** the lane's [cap](#test-workers)
 
 Org variables never reach private repos on GitHub Free, so each repo sets its own.
 Split a job only when part of it needs a different lane.
@@ -28,7 +29,7 @@ Split a job only when part of it needs a different lane.
 | Lane | Use when | Slots | Docker |
 | --- | --- | --- | --- |
 | `ci` | default | 24 | no |
-| `ci-docker` | the job runs `docker` | 2 | yes |
+| `ci-docker` | the job runs `docker` | 4 | yes |
 | `ci-heavy` | working set over 4 GiB | 5 | yes |
 | `ci-urgent` | the job fixes or unblocks CI | 2 | no |
 
@@ -57,9 +58,32 @@ Pods have no swap, so a job over its limit dies.
 A killed pod reports "The self-hosted runner lost communication with the server", never an out-of-memory error.
 Fix it at the cause:
 
-- **Test workers:** cap them, child processes too
+- **Test workers:** the lane's [cap](#test-workers)
 - **Engines per test:** close databases, servers
 - **`node_modules`:** link or reuse, never copy
+
+## Test workers
+
+Runners see the **whole node**: `nproc` prints 16 to 18 in a pod that reserves half a core.
+Test runners size their pool from it, so **set the cap**.
+
+| Lane | Cap |
+| --- | --- |
+| `ci`, `ci-urgent` | 4 |
+| `ci-docker` | 3 |
+| `ci-heavy` | 8 |
+
+- **RAM limit** sets the cap
+- A worker costs **up to 1.5 GiB**
+- **No CPU limit**: extra workers take other pods' cores
+- **Child processes** share the cap
+- **Suites at once** split it
+
+| Runner | Default | Set |
+| --- | --- | --- |
+| Vitest | cores − 1 | `maxWorkers: 4` |
+| `bun test --parallel` | cores | `--parallel=4` |
+| Playwright | cores ÷ 2 | `workers: process.env.CI ? 2 : undefined` |
 
 ## Disk
 
