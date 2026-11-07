@@ -1,0 +1,58 @@
+# Org starter: docs/ci.md in one job. Needs repo variable RSI_CI_RUNNER=ci and
+# the actionlint, PR title, and rerun-lost-runner callers.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+    paths-ignore: [docs/**, '*.md']
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.pull_request.stack == null ||
+       github.event.pull_request.stack.position == github.event.pull_request.stack.size)
+    runs-on: ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      # The whole change: a stack from its base, a PR from its base, a push from
+      # its previous head. A missing base or a git error runs everything.
+      - id: scope
+        env:
+          BASE: ${{ github.event.pull_request.stack.base.sha || github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          code() { echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "${BASE//0/}" ] || code
+          git cat-file -e "$BASE^{commit}" 2>/dev/null ||
+            git fetch -q --no-tags --depth=1 origin "$BASE" || code
+          git diff --quiet --no-renames "$BASE" HEAD -- . ':(exclude)docs/' ':(exclude)*.md' || code
+      # Always-on checks here, such as the secret scan.
+      # The runner image bakes this Bun, so setup-bun downloads nothing.
+      - if: steps.scope.outputs.code
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - if: steps.scope.outputs.code
+        run: bun install --frozen-lockfile
+      - if: steps.scope.outputs.code
+        uses: RSI-Software/.github/actions/stack-lint@main
+        with:
+          token: ${{ secrets.RSI_STACK_READ_TOKEN }}
+      # The ci lane caps test workers at 4 (docs/ci.md#test-workers).
+      # Vitest: set maxWorkers: 4 in its config instead.
+      - if: steps.scope.outputs.code
+        run: bun test --parallel=4

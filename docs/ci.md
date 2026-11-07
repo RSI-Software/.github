@@ -6,6 +6,9 @@ Live cost per job: [ci-ledger](https://k3s.rsi.nz).
 
 ## Checklist
 
+**A new repo starts** from the [`ci.yml` starter](../workflow-templates/ci.yml) on the org's New workflow page.
+It meets this list beside the [actionlint](actionlint.md), [PR title](pr-title.md), and [rerun](rerun-lost-runner.md) callers.
+
 Every workflow that starts a runner pod:
 
 1. **Repo variable:** `RSI_CI_RUNNER=ci`
@@ -240,7 +243,7 @@ One step in the always-on job decides; `code=true` means run everything.
         run: bun install --frozen-lockfile
 ```
 
-Further jobs skip without a pod:
+A job on another lane skips without a pod:
 
 ```yaml
   test:

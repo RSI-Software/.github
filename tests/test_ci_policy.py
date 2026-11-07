@@ -7,11 +7,9 @@ import subprocess
 import tempfile
 import unittest
 
-WORKFLOW = (Path(__file__).resolve().parents[1] / ".github/workflows/actionlint.yml").read_text()
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = (ROOT / ".github/workflows/actionlint.yml").read_text()
 SCRIPT = "\n".join(line[10:] for line in WORKFLOW.split("<<'JS'\n", 1)[1].split("\n          JS\n", 1)[0].splitlines())
-LANE = "${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"
-SKIP = ("!github.event.pull_request.draft && (github.event.pull_request.stack == null ||"
-        " github.event.pull_request.stack.position == github.event.pull_request.stack.size)")
 SHARED = "RSI-Software/.github/.github/workflows/"
 
 
@@ -20,19 +18,8 @@ def caller(name, reusable, on=None):
 
 
 ALIGNED = {
-    "ci.yml": {
-        "name": "CI",
-        "on": {"pull_request": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]},
-               "push": {"branches": ["main"]}},
-        "concurrency": {"group": "ci", "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"},
-        "jobs": {"verify": {"if": SKIP, "runs-on": LANE, "timeout-minutes": 10, "steps": [
-            {"uses": "actions/checkout@v5", "with": {"fetch-depth": 2}},
-            {"uses": "oven-sh/setup-bun@v2", "with": {"bun-version": "${{ env.BUN }}"}},
-            {"run": "bun install --frozen-lockfile"},
-            {"uses": "RSI-Software/.github/actions/stack-lint@main"}]},
-            "test": {"needs": "verify", "runs-on": LANE, "timeout-minutes": 5, "steps": [{"run": "true"}]}},
-        "env": {"BUN": "1.4.2"},
-    },
+    # The org starter, beside the callers it names, warns nothing.
+    "ci.yml": (ROOT / "workflow-templates/ci.yml").read_text(),
     "pr-title.yml": caller("PR title", "pr-title.yml", {"pull_request": {"types": ["opened", "edited"]}}),
     "actionlint.yml": caller("actionlint", "actionlint.yml"),
     "rerun-lost-runner.yml": {
