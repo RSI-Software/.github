@@ -37,10 +37,26 @@ s["calls"].append({"tool": tool, "args": args, "stdin": stdin})
 def finish(code=0):
     p.write_text(json.dumps(s))
     sys.exit(code)
+if tool == "git":
+    for sha, ref in s["refs"]:
+        print(f"{sha}\t{ref}")
+    finish()
 if tool == "docker":
     if args[:2] == ["buildx", "build"]:
         meta = args[args.index("--metadata-file") + 1]
         pathlib.Path(meta).write_text(json.dumps({"containerimage.digest": s["digest"]}))
+    finish()
+if args[-1].endswith("/git/refs"):
+    ref = json.loads(args[args.index("--data") + 1])["ref"]
+    pathlib.Path(args[args.index("-o") + 1]).write_text('{"message": "Reference already exists"}')
+    if s["steal"]:
+        s["steal"] -= 1
+        s["refs"].append(["b" * 40, ref])
+    if ref in [r for _, r in s["refs"]]:
+        print(422, end="")
+        finish()
+    s["refs"].append([json.loads(args[args.index("--data") + 1])["sha"], ref])
+    print(201, end="")
     finish()
 if "audience=k3s-hq" in args[-1]:
     print(json.dumps({"value": "oidc-token"}))
@@ -57,11 +73,12 @@ class WorkflowTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="k3s-test-")
         self.dir = Path(self.tmp.name)
         self.fixture = self.dir / "fixture.json"
-        self.state = {"calls": [], "digest": DIGEST, "status": 200, "reply": []}
+        self.state = {"calls": [], "digest": DIGEST, "status": 200, "reply": [], "refs": [], "steal": 0}
         mock = self.dir / "docker"
         mock.write_text(MOCK)
         mock.chmod(0o755)
         (self.dir / "curl").symlink_to(mock)
+        (self.dir / "git").symlink_to(mock)
         (self.dir / "registry").mkdir()
         (self.dir / "registry/config.json").write_text("{}")
         self.env = dict(os.environ, PATH=str(self.dir) + ":" + os.environ["PATH"], FIXTURE=str(self.fixture),
@@ -69,7 +86,9 @@ class WorkflowTests(unittest.TestCase):
                         GITHUB_REF="refs/heads/main", GITHUB_STEP_SUMMARY=str(self.dir / "summary"),
                         RSI_REGISTRY_CONFIG=str(self.dir / "registry"), RELEASES="https://k3s.example/api/releases",
                         ACTIONS_ID_TOKEN_REQUEST_URL="https://token.example/?v=1",
-                        ACTIONS_ID_TOKEN_REQUEST_TOKEN="request-token")
+                        ACTIONS_ID_TOKEN_REQUEST_TOKEN="request-token", PREFIX="r", GITHUB_TOKEN="gh-token",
+                        GITHUB_SERVER_URL="https://github.example", GITHUB_API_URL="https://api.example",
+                        GITHUB_REPOSITORY="o/shop", GITHUB_OUTPUT=str(self.dir / "output"))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -91,8 +110,39 @@ class WorkflowTests(unittest.TestCase):
         for repo in ("shop", "docker.io/library/shop", f"{REGISTRY}/shop"):
             self.assertEqual(self.check([{"repository": repo}])[0]["repository"], "shop")
         self.assertIn("carries no tag", self.check([{"repository": "shop:latest"}], 2))
+
+    def tag(self, refs, steal=0, expected=0):
+        self.state.update(refs=[list(r) for r in refs], steal=steal)
+        out = self.run_step("Tag the revision", expected)
+        return out if expected else (self.dir / "output").read_text().strip().removeprefix("revision=")
+
+    def test_tag_takes_the_next_number_with_the_token_off_argv(self):
+        other = "c" * 40
+        # Gaps from rolled-back releases stay burnt; other prefixes and names never count.
+        self.assertEqual(self.tag([(other, "refs/tags/r2"), (other, "refs/tags/r9"), (other, "refs/tags/r10^{}"),
+                                   (other, "refs/tags/rc1"), (other, "refs/tags/r10")]), "r11")
+        ls, post = self.state["calls"]
+        self.assertEqual(ls["args"][-1], "refs/tags/r*")
+        self.assertEqual(json.loads(post["args"][post["args"].index("--data") + 1]),
+                         {"ref": "refs/tags/r11", "sha": SHA})
+        self.assertEqual(post["stdin"].strip(), "Authorization: Bearer gh-token")
+        self.assertNotIn("gh-token", " ".join(ls["args"] + post["args"]))
+
+    def test_tag_rerun_reuses_the_commits_tag(self):
+        self.env["PREFIX"] = "shipped/r"
+        self.assertEqual(self.tag([("c" * 40, "refs/tags/shipped/r8"), ("e" * 40, "refs/tags/shipped/r7"),
+                                   (SHA, "refs/tags/shipped/r7^{}")]), "shipped/r7")
+        self.assertEqual([c["tool"] for c in self.state["calls"]], ["git"])
+
+    def test_tag_race_retries_past_a_taken_number(self):
+        self.assertEqual(self.tag([("c" * 40, "refs/tags/r4")], steal=2), "r7")
+        self.assertIn("no free r<N> tag after 5 tries", self.tag([], steal=5, expected=1))
+
+    def test_tag_refuses_other_branches_and_bad_prefixes(self):
+        self.env["PREFIX"] = "r*"
+        self.assertIn("prefix takes", self.tag([], expected=2))
         self.env["GITHUB_REF"] = "refs/heads/feature"
-        self.assertIn("only refs/heads/main", self.check([{"repository": "shop"}], 2))
+        self.assertIn("only refs/heads/main", self.tag([], expected=2))
 
     def test_build_pushes_the_commit_tag_with_the_registry_cache(self):
         self.check([{"repository": "shop", "dockerfile": "deploy/Dockerfile", "context": "src",
