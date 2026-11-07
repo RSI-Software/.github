@@ -1,0 +1,7 @@
+{
+  "name": "RSI CI",
+  "description": "One-job CI on rsi-k3s runners that meets the org CI checklist.",
+  "iconName": "octicon check-circle",
+  "categories": ["JavaScript", "TypeScript"],
+  "filePatterns": ["package.json$"]
+}
