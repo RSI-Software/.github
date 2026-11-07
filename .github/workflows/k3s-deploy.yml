@@ -1,5 +1,6 @@
-# The release route for k3s apps: build once on a CI lane, push to zot, render the
-# manifests with the pushed digests, and post them to k3s-hq in one OIDC-signed call.
+# The release route for k3s apps: tag the commit <prefix><N>, build once on a CI lane, push
+# to zot, render the manifests with the pushed digests, and post them to k3s-hq in one
+# OIDC-signed call.
 # No buildah, kubectl or kubeconfig. Callers and contract: docs/k3s-deploy.md.
 #
 # Layer cache: each repository keeps `<repository>:cache` in zot, max mode, on top of
@@ -33,12 +34,87 @@ on:
         required: false
         type: number
         default: 30
+      prefix:
+        description: Revision tag prefix; each released commit is tagged <prefix><N>, e.g. r12 or shipped/r56
+        required: false
+        type: string
+        default: r
+    outputs:
+      revision:
+        description: The released commit's revision tag, e.g. r12
+        value: ${{ jobs.tag.outputs.revision }}
 
 permissions:
   contents: read
 
 jobs:
+  # One revision per released commit, tagged before the build: a rerun reuses the commit's tag,
+  # a new commit takes the highest number plus one, so a rolled-back number is never reused.
+  # Its own job, one step and no checkout: the only place contents: write reaches.
+  tag:
+    runs-on: ci
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      revision: ${{ steps.tag.outputs.revision }}
+    steps:
+      # Creating a ref that exists is a 422: a concurrent deploy took the number, so reread.
+      - name: Tag the revision
+        id: tag
+        env:
+          PREFIX: ${{ inputs.prefix }}
+          SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # k3s-hq admits only main's tokens; fail before tagging or building.
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "k3s-hq releases only refs/heads/main, not $GITHUB_REF" >&2; exit 2
+          fi
+          if [[ ! "$PREFIX" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "prefix takes letters, digits and . _ / -, not '$PREFIX'" >&2; exit 2
+          fi
+          # The token rides git's environment, never argv.
+          GIT_CONFIG_VALUE_0="Authorization: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0
+          revision=""
+          for _ in 1 2 3 4 5; do
+            # Annotated tags list twice; the peeled ^{} line carries the commit.
+            refs=$(git ls-remote --tags "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "refs/tags/$PREFIX*")
+            last=0
+            while read -r sha ref; do
+              name=${ref#refs/tags/}
+              name=${name%"^{}"}
+              n=${name#"$PREFIX"}
+              if [[ ! "$n" =~ ^[0-9]+$ ]]; then continue; fi
+              if [[ "$sha" == "$SHA" ]]; then revision=$name; fi
+              if (( 10#$n > last )); then last=$((10#$n)); fi
+            done <<<"$refs"
+            if [[ -n "$revision" ]]; then
+              echo "$SHA is already $revision"; break
+            fi
+            next="$PREFIX$((last + 1))"
+            status=$(curl -sS --max-time 30 -o "$RUNNER_TEMP/k3s-tag.json" -w '%{http_code}' -H @- \
+              -H 'Accept: application/vnd.github+json' -X POST \
+              --data "{\"ref\": \"refs/tags/$next\", \"sha\": \"$SHA\"}" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/refs" <<<"Authorization: Bearer $GITHUB_TOKEN")
+            if [[ "$status" == 201 ]]; then
+              revision=$next; echo "Tagged $SHA $revision"; break
+            fi
+            if [[ "$status" != 422 ]]; then
+              echo "::error::tagging $next: HTTP $status $(cat "$RUNNER_TEMP/k3s-tag.json")"; exit 1
+            fi
+            echo "$next was taken; rereading the tags"
+          done
+          if [[ -z "$revision" ]]; then
+            echo "::error::no free $PREFIX<N> tag after 5 tries"; exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "Revision $revision" >> "$GITHUB_STEP_SUMMARY"
+
   release:
+    needs: tag
     # A plain ARC pod: buildkitd, zot and the LAN k3s.rsi.nz are reachable from inside the cluster.
     runs-on: ci
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -60,10 +136,6 @@ jobs:
           IMAGES: ${{ inputs.images }}
         run: |
           set -euo pipefail
-          # k3s-hq admits only main's tokens; fail before building.
-          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
-            echo "k3s-hq releases only refs/heads/main, not $GITHUB_REF" >&2; exit 2
-          fi
           jq -e 'type == "array" and length > 0 and all(.[];
               .repository | type == "string" and length > 0 and (test("[@\\s]|:[^/]*$") | not))' <<<"$IMAGES" >/dev/null \
             || { echo "images must be a non-empty array of {repository, dockerfile?, context?, build-args?}; repository carries no tag" >&2; exit 2; }
