@@ -39,6 +39,31 @@ k3s-hq then pins, migrates, rolls out, checks and undoes: [Releases](https://git
 - **Other images by digest**, or k3s-hq refuses
 - **Old pins keep** their buildah, kubectl path
 
+## Promote
+
+A `source` input releases what **another record tested**, with **no build**.
+
+```yaml
+  production:
+    needs: staging
+    permissions:
+      contents: write
+      actions: write
+      id-token: write
+    uses: RSI-Software/.github/.github/workflows/k3s-deploy.yml@<full SHA>
+    with:
+      app: shop-prod
+      source: shop-staging
+      images: '[{"repository": "shop"}]'
+      manifests: cp deploy/k3s/prod/*.yaml "$K3S_DEPLOY_OUT"
+```
+
+- `source` is a **record of the same repository**
+- `images` **resolve** to zot's `<repository>:<commit>`
+- k3s-hq admits **what the source's pass ran**
+- **Any other digest** fails red
+- **Run it at the commit** the source released
+
 ## Revisions
 
 - A **rerun reuses** the commit's tag and reposts

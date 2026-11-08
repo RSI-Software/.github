@@ -67,6 +67,11 @@ if "/compare/" in args[-1]:
     finish()
 if args[-1].endswith("/dispatches"):
     finish()
+if "/manifests/" in args[-1]:
+    if s.get("missing"):
+        finish(22)
+    print(f"HTTP/1.1 200 OK\\r\\nDocker-Content-Digest: {s['digest']}\\r\\n\\r\\n", end="")
+    finish()
 if "audience=k3s-hq" in args[-1]:
     print(json.dumps({"value": "oidc-token"}))
     finish()
@@ -188,6 +193,24 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(json.loads((self.dir / "k3s-built.jsonl").read_text()),
                          {"repository": "shop", "digest": DIGEST})
 
+    def test_promote_resolves_the_commit_digest_without_a_build(self):
+        (self.dir / "registry/config.json").write_text(json.dumps({"auths": {REGISTRY: {"auth": "Y2k6cHc="}}}))
+        self.env["SOURCE"] = "shop-staging"
+        self.check([{"repository": "shop", "dockerfile": "deploy/Dockerfile"}])
+        self.run_step("Resolve the promoted images")
+        (head,) = self.state["calls"]
+        self.assertEqual(head["tool"], "curl")
+        self.assertIn("-fsSI", head["args"])
+        self.assertEqual(head["args"][-1], f"http://{REGISTRY}/v2/shop/manifests/{SHA}")
+        self.assertEqual(head["stdin"].strip(), "Authorization: Basic Y2k6cHc=")
+        self.assertNotIn("Y2k6cHc=", " ".join(head["args"]))
+        self.assertEqual(json.loads((self.dir / "k3s-built.jsonl").read_text()),
+                         {"repository": "shop", "digest": DIGEST})
+        self.state["missing"] = True
+        self.assertIn(f"zot has no shop:{SHA} to promote", self.run_step("Resolve the promoted images", 1))
+        (self.dir / "registry/config.json").write_text("{}")
+        self.assertIn("has no 192.168.1.231:5002 login", self.run_step("Resolve the promoted images", 1))
+
     def render(self, manifests, expected=0):
         self.env["MANIFESTS"] = textwrap.dedent(manifests)
         (self.dir / "k3s-built.jsonl").write_text(json.dumps({"repository": "shop", "digest": DIGEST}) + "\n")
@@ -216,6 +239,7 @@ class WorkflowTests(unittest.TestCase):
         """)
         body = self.body()
         self.assertEqual(body["app"], "shop")
+        self.assertNotIn("source", body)
         self.assertEqual([o["kind"] for o in body["objects"]], ["Deployment", "Service", "ConfigMap"])
         self.assertEqual(body["objects"][2]["metadata"]["name"], f"{SHA}-r5")
         spec = body["objects"][0]["spec"]["template"]["spec"]
@@ -226,6 +250,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("wrote no manifests", self.render("true", 1))
         out = self.render('echo "{kind: Service, metadata: {name: web}}" > "$K3S_DEPLOY_OUT/s.yaml"')
         self.assertIn(f"::warning::no manifest runs {REGISTRY}/shop@{DIGEST}", out)
+
+    def test_render_names_a_promotions_source(self):
+        self.env["SOURCE"] = "shop-staging"
+        self.render('echo "{kind: Service, metadata: {name: web}}" > "$K3S_DEPLOY_OUT/s.yaml"')
+        self.assertEqual(self.body()["source"], "shop-staging")
 
     def release(self, reply, status=200, exit=0, expected=1):
         (self.dir / "k3s-release.json").write_text('{"app": "shop", "objects": []}')
@@ -249,6 +278,8 @@ class WorkflowTests(unittest.TestCase):
             ([running, {"state": "failed", "stage": "checks", "undo": "done", "error": "health"}], 200, 0,
              "failed at checks, undo done: health"),
             ([{"error": "token repository does not own this app"}], 403, 0, "refused (HTTP 403)"),
+            ([{"error": "objects refused", "problems": ["Deployment/web: image x is no digest shop-staging passed"]}],
+             400, 0, "no digest shop-staging passed"),
             ([running, {"error": "release status unavailable"}], 200, 0, "lost the release status"),
             ([running], 200, 0, "ended without a result;"),
             ([running], 200, 28, "curl exit 28"),

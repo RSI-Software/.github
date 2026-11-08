@@ -1,6 +1,7 @@
 # The release route for k3s apps: tag the commit <prefix><N>, build once on a CI lane, push
 # to zot, render the manifests with the pushed digests, and post them to k3s-hq in one
-# OIDC-signed call.
+# OIDC-signed call. A promotion (`source`) skips the build and posts the digests zot holds for
+# the commit, which k3s-hq admits only if the source's last pass ran them.
 # No buildah, kubectl or kubeconfig. Callers and contract: docs/k3s-deploy.md.
 #
 # Layer cache: each repository keeps `<repository>:cache` in zot, max mode, on top of
@@ -17,7 +18,7 @@ on:
         type: string
       images:
         description: >-
-          JSON array of images to build, e.g.
+          JSON array of images to build, or with source to promote, e.g.
           [{"repository": "render-api", "dockerfile": "deploy/Dockerfile", "context": ".", "build-args": "COMMIT=..."}].
           Each pushes as 192.168.1.231:5002/<repository>:<commit>; repository carries no tag.
           Each build also gets build-arg K3S_DEPLOY_REVISION=<revision tag>, before its own build-args.
@@ -26,8 +27,8 @@ on:
       manifests:
         description: >-
           Shell command, run in the checkout, that writes the app's YAML or JSON manifests into
-          $K3S_DEPLOY_OUT ($K3S_DEPLOY_SHA and $K3S_DEPLOY_REVISION are set). Each image of a built repository becomes its
-          pushed digest; every other image must already be by digest.
+          $K3S_DEPLOY_OUT ($K3S_DEPLOY_SHA and $K3S_DEPLOY_REVISION are set). Each image of a built or promoted repository
+          becomes its digest; every other image must already be by digest.
         required: true
         type: string
       timeout-minutes:
@@ -40,6 +41,14 @@ on:
         required: false
         type: string
         default: r
+      source:
+        description: >-
+          Promote: a k3s-hq app of the same repository whose last pass ran this commit. Nothing builds;
+          each images repository resolves to zot's <repository>:<commit> digest, which k3s-hq admits
+          only if that pass ran it.
+        required: false
+        type: string
+        default: ""
     outputs:
       revision:
         description: The released commit's revision tag, e.g. r12
@@ -150,6 +159,7 @@ jobs:
       id-token: write
     env:
       APP: ${{ inputs.app }}
+      SOURCE: ${{ inputs.source }}
       SHA: ${{ github.sha }}
       K3S_DEPLOY_REVISION: ${{ needs.tag.outputs.revision }}
       REGISTRY: 192.168.1.231:5002
@@ -178,6 +188,7 @@ jobs:
           bun-version: 1.4.2
 
       - name: Build and push the images
+        if: inputs.source == ''
         run: |
           set -euo pipefail
           if [[ -z "${RSI_REGISTRY_CONFIG:-}" || ! -r "$RSI_REGISTRY_CONFIG/config.json" ]]; then
@@ -207,6 +218,27 @@ jobs:
             echo "$ref:$SHA is $ref@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
           done < <(jq -c '.[]' "$RUNNER_TEMP/k3s-images.json")
 
+      # The source's release pushed <repository>:<commit>; k3s-hq refuses a digest its pass never ran.
+      - name: Resolve the promoted images
+        if: inputs.source != ''
+        run: |
+          set -euo pipefail
+          auth=$(jq -er --arg r "$REGISTRY" '.auths[$r].auth' "$RSI_REGISTRY_CONFIG/config.json" 2>/dev/null) \
+            || { echo "::error::ARC registry auth config has no $REGISTRY login"; exit 1; }
+          : > "$RUNNER_TEMP/k3s-built.jsonl"
+          while IFS= read -r repository; do
+            # HEAD by tag; the auth rides stdin, never argv.
+            digest=$(curl -fsSI --max-time 30 -H @- \
+              -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              "http://$REGISTRY/v2/$repository/manifests/$SHA" <<<"Authorization: Basic $auth" \
+              | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2 }') || digest=""
+            if [[ -z "$digest" ]]; then
+              echo "::error::zot has no $repository:$SHA to promote; $SOURCE never released this commit"; exit 1
+            fi
+            jq -nc --arg repository "$repository" --arg digest "$digest" '{$repository, $digest}' >> "$RUNNER_TEMP/k3s-built.jsonl"
+            echo "$REGISTRY/$repository:$SHA is $REGISTRY/$repository@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+          done < <(jq -r '.[].repository' "$RUNNER_TEMP/k3s-images.json")
+
       - name: Render the manifests
         env:
           MANIFESTS: ${{ inputs.manifests }}
@@ -216,7 +248,7 @@ jobs:
           rm -rf "$out" && mkdir -p "$out"
           K3S_DEPLOY_OUT="$out" K3S_DEPLOY_SHA="$SHA" bash -euo pipefail -c "$MANIFESTS"
           K3S_DEPLOY_OUT="$out" bun run - <<'TS'
-          const { APP, REGISTRY, RUNNER_TEMP, K3S_DEPLOY_OUT } = process.env as Record<string, string>;
+          const { APP, SOURCE, REGISTRY, RUNNER_TEMP, K3S_DEPLOY_OUT } = process.env as Record<string, string>;
           const fail = (message: string): never => {
             console.log(`::error::${message}`);
             process.exit(1);
@@ -263,7 +295,7 @@ jobs:
           for (const ref of built.values())
             if (!used.has(ref)) console.log(`::warning::no manifest runs ${ref}`);
           for (const o of objects) console.log(`${o.kind}/${o.metadata?.name}`);
-          await Bun.write(`${RUNNER_TEMP}/k3s-release.json`, JSON.stringify({ app: APP, objects }));
+          await Bun.write(`${RUNNER_TEMP}/k3s-release.json`, JSON.stringify({ app: APP, objects, source: SOURCE || undefined }));
           TS
 
       # One call; the reply is NDJSON heartbeats ending in the result. A refusal, a failed
@@ -291,7 +323,7 @@ jobs:
           status=$(awk 'toupper($1) ~ /^HTTP\// { code = $2 } END { print code }' "$headers" 2>/dev/null || true)
           last=$(grep -v '^[[:space:]]*$' "$log" 2>/dev/null | tail -n 1 || true)
           if jq -e '.state == "released"' <<<"$last" >/dev/null 2>&1; then
-            echo "Released $APP at $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Released $APP at $SHA${SOURCE:+, promoted from $SOURCE}" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [[ "$sent" != 0 ]]; then
