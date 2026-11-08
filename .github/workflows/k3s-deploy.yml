@@ -51,12 +51,14 @@ permissions:
 jobs:
   # One revision per released commit, tagged before the build: a rerun reuses the commit's tag,
   # a new commit takes the highest number plus one, so a rolled-back number is never reused.
-  # Its own job, one step and no checkout: the only place contents: write reaches.
+  # Its own job, one step and no checkout: the only place contents: write and actions: write reach.
   tag:
     runs-on: ci
     timeout-minutes: 5
     permissions:
       contents: write
+      # Hands an overtaken release to the caller's run on main.
+      actions: write
     outputs:
       revision: ${{ steps.tag.outputs.revision }}
     steps:
@@ -67,6 +69,8 @@ jobs:
           PREFIX: ${{ inputs.prefix }}
           SHA: ${{ github.sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          # The caller's workflow, even inside this reusable one.
+          WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           set -euo pipefail
           # k3s-hq admits only main's tokens; fail before tagging or building.
@@ -79,6 +83,12 @@ jobs:
           # The token rides git's environment, never argv.
           GIT_CONFIG_VALUE_0="Authorization: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0
+          # GITHUB_TOKEN may not tag a commit whose workflow files differ from main's head: a 403 once main is past this commit.
+          overtaken() {
+            curl -sS --max-time 30 -H @- -H 'Accept: application/vnd.github+json' \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/compare/$SHA...main" <<<"Authorization: Bearer $GITHUB_TOKEN" \
+              | jq -e '.status == "ahead"' >/dev/null
+          }
           revision=""
           for _ in 1 2 3 4 5; do
             # Annotated tags list twice; the peeled ^{} line carries the commit.
@@ -103,6 +113,16 @@ jobs:
             if [[ "$status" == 201 ]]; then
               revision=$next; echo "Tagged $SHA $revision"; break
             fi
+            # Re-run the caller on main, whose head carries this change: its path filters may never start a run for it.
+            if [[ "$status" == 403 ]] && overtaken; then
+              file=${WORKFLOW_REF%@*}
+              file=${file##*/}
+              curl -fsS --max-time 30 -H @- -H 'Accept: application/vnd.github+json' -X POST --data '{"ref": "main"}' \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/$file/dispatches" <<<"Authorization: Bearer $GITHUB_TOKEN"
+              echo "::notice::main moved past $SHA, so it cannot take a tag; $file re-runs on main to release it"
+              echo "Handed off: $file re-runs on main" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             if [[ "$status" != 422 ]]; then
               echo "::error::tagging $next: HTTP $status $(cat "$RUNNER_TEMP/k3s-tag.json")"; exit 1
             fi
@@ -116,6 +136,8 @@ jobs:
 
   release:
     needs: tag
+    # No revision: the tag job handed this commit to the caller's run on main.
+    if: needs.tag.outputs.revision != ''
     # A plain ARC pod: buildkitd, zot and the LAN k3s.rsi.nz are reachable from inside the cluster.
     runs-on: ci
     timeout-minutes: ${{ inputs.timeout-minutes }}

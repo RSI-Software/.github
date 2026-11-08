@@ -48,6 +48,10 @@ if tool == "docker":
     finish()
 if args[-1].endswith("/git/refs"):
     ref = json.loads(args[args.index("--data") + 1])["ref"]
+    if s["main"]:
+        pathlib.Path(args[args.index("-o") + 1]).write_text('{"message": "Resource not accessible by integration"}')
+        print(403, end="")
+        finish()
     pathlib.Path(args[args.index("-o") + 1]).write_text('{"message": "Reference already exists"}')
     if s["steal"]:
         s["steal"] -= 1
@@ -57,6 +61,11 @@ if args[-1].endswith("/git/refs"):
         finish()
     s["refs"].append([json.loads(args[args.index("--data") + 1])["sha"], ref])
     print(201, end="")
+    finish()
+if "/compare/" in args[-1]:
+    print(json.dumps({"status": s["main"]}))
+    finish()
+if args[-1].endswith("/dispatches"):
     finish()
 if "audience=k3s-hq" in args[-1]:
     print(json.dumps({"value": "oidc-token"}))
@@ -73,7 +82,7 @@ class WorkflowTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="k3s-test-")
         self.dir = Path(self.tmp.name)
         self.fixture = self.dir / "fixture.json"
-        self.state = {"calls": [], "digest": DIGEST, "status": 200, "reply": [], "refs": [], "steal": 0}
+        self.state = {"calls": [], "digest": DIGEST, "status": 200, "reply": [], "refs": [], "steal": 0, "main": None}
         mock = self.dir / "docker"
         mock.write_text(MOCK)
         mock.chmod(0o755)
@@ -137,6 +146,26 @@ class WorkflowTests(unittest.TestCase):
     def test_tag_race_retries_past_a_taken_number(self):
         self.assertEqual(self.tag([("c" * 40, "refs/tags/r4")], steal=2), "r7")
         self.assertIn("no free r<N> tag after 5 tries", self.tag([], steal=5, expected=1))
+
+    # GITHUB_TOKEN may not tag a commit whose workflow files differ from main's head.
+    def test_tag_refused_once_main_moves_on_reruns_the_caller_on_main(self):
+        self.env["WORKFLOW_REF"] = "o/shop/.github/workflows/shop.yml@refs/heads/main"
+        self.state["main"] = "ahead"
+        self.assertIn("shop.yml re-runs on main", self.run_step("Tag the revision"))
+        self.assertFalse((self.dir / "output").exists())
+        compare, dispatch = self.state["calls"][-2:]
+        self.assertEqual(compare["args"][-1], f"https://api.example/repos/o/shop/compare/{SHA}...main")
+        self.assertEqual(dispatch["args"][-1], "https://api.example/repos/o/shop/actions/workflows/shop.yml/dispatches")
+        self.assertEqual(json.loads(dispatch["args"][dispatch["args"].index("--data") + 1]), {"ref": "main"})
+        self.assertEqual(dispatch["stdin"].strip(), "Authorization: Bearer gh-token")
+        self.assertNotIn("gh-token", " ".join(compare["args"] + dispatch["args"]))
+
+    def test_tag_refused_while_main_is_the_commit_is_red(self):
+        self.env["WORKFLOW_REF"] = "o/shop/.github/workflows/shop.yml@refs/heads/main"
+        for main in ("identical", "diverged"):
+            self.state.update(main=main, calls=[])
+            self.assertIn("HTTP 403", self.tag([], expected=1))
+            self.assertNotIn("/dispatches", " ".join(c["args"][-1] for c in self.state["calls"]))
 
     def test_tag_refuses_other_branches_and_bad_prefixes(self):
         self.env["PREFIX"] = "r*"
