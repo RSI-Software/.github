@@ -163,7 +163,7 @@ jobs:
               const runner = labels(job);
               // 3. Lane from RSI_CI_RUNNER; hosted and host runners need a written exception
               if (runner && hosted(job)) { if (!allowed(wf, "hosted")) report("hosted", wf, line, `${id}: runs-on ${runner} bills hosted minutes; add "# ci-policy: allow hosted <reason>"`); }
-              else if (runner?.every((l) => /^ci(-docker|-heavy|-urgent)?$/.test(l))) report("lane", wf, line, `${id}: runs-on ${runner} hard-codes a lane; derive it from vars.RSI_CI_RUNNER`);
+              else if (runner?.every((l) => /^ci(-docker|-docker-heavy|-heavy|-e2e|-urgent)?$/.test(l))) report("lane", wf, line, `${id}: runs-on ${runner} hard-codes a lane; derive it from vars.RSI_CI_RUNNER`);
               else if (runner && !allowed(wf, "host")) report("host", wf, line, `${id}: runs-on ${runner} is outside rsi-k3s; add "# ci-policy: allow host <reason>"`);
               // 4. timeout-minutes
               if (job["timeout-minutes"] === undefined) report("timeout", wf, line, `${id}: no timeout-minutes; a hang holds a slot 6 h, 3 times`);

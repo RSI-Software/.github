@@ -34,7 +34,9 @@ The shared actionlint workflow **warns on drift** from this list: [policy](actio
 | --- | --- | --- | --- |
 | `ci` | default | 24 | no |
 | `ci-docker` | the job runs `docker` | 4 | yes |
-| `ci-heavy` | working set over 4 GiB | 5 | yes |
+| `ci-docker-heavy` | its Docker store passes 3 GiB | 2 | yes |
+| `ci-heavy` | working set over 4 GiB | 5 | no |
+| `ci-e2e` | a browser suite against a Docker stack | 3 | yes |
 | `ci-urgent` | the job fixes or unblocks CI | 2 | no |
 
 Start on `ci`; move a job only on evidence from its ledger page.
@@ -42,10 +44,10 @@ Start on `ci`; move a job only on evidence from its ledger page.
 - **RAM p90 over 4 GiB:** `ci-heavy`
 - **Killed at the 8 GiB limit:** fix the leak first
 - **Needs a Docker daemon:** `ci-docker`
-- **Needs both:** `ci-heavy`
+- **Browsers and Docker:** `ci-e2e`, the browser job alone
 - **Only builds an image:** `ci` and node BuildKit
 
-`ci-docker` and `ci-heavy` have few slots: a long job there queues every other repo.
+Every lane but `ci` has few slots: a long job there queues every other repo.
 Keep lint, typecheck, and title checks out of heavy jobs.
 
 ## Memory
@@ -56,7 +58,7 @@ Pods have no swap, so a job over its limit dies.
 - **tmpfs:** `_work`, `/tmp`, `~/.local`
 - **So:** checkout and `node_modules` cost RAM
 - **`ci`:** 2 GiB request, 8 GiB limit
-- **`ci-heavy`:** 5.5 GiB request, 18 GiB limit
+- **`ci-heavy`:** 6 GiB request, 18 GiB limit
 - **`_work` cap:** 3 GiB `ci`, 8 GiB `ci-heavy`
 
 A killed pod reports "The self-hosted runner lost communication with the server", never an out-of-memory error.
