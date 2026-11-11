@@ -50,7 +50,7 @@ DRIFTED = {
     },
 }
 RULES = {"runner-var", "one-job", "lane", "hosted", "host", "timeout", "no-edited", "main-cancel",
-         "skip-draft-stack", "toolchain", "shallow", "rerun", "pr-title", "commitlint", "actionlint",
+         "skip-draft-stack", "shallow", "rerun", "pr-title", "commitlint", "actionlint",
          "stack-lint", "k3s-pin"}
 
 

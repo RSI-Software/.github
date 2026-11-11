@@ -112,17 +112,14 @@ The lanes point caches at tmpfs; a job that overrides them writes to disk.
 
 ## Toolchain
 
-The runner image bakes these; any other version downloads every run:
+The runner image's [`Dockerfile`](https://github.com/RSI-Software/rsi/blob/main/infra/managed/rsi-k3s/runner-image/Dockerfile) `ARG`s pin what it bakes: Node, Bun, Playwright with Chromium, Docker Compose, ffmpeg, bzip2, tmux.
+Any other version downloads every run.
 
-- **Node:** 24.21.0
-- **Bun:** 1.4.4
-- **Playwright:** 1.63.0, with Chromium
-- **Docker Compose**
-- **ffmpeg, bzip2, tmux**
+- **Not baked:** `gh`
+- **Every run installs it?** It belongs in the [image](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#runner-image)
+- **Pin setup actions** to the baked version, or drop them
+- **`rsi dev toolchain`** lists every pin that misses it
 
-Not baked: `gh`.
-A tool every run installs belongs in the [image](https://github.com/RSI-Software/rsi/blob/main/infra/docs/runbooks/rsi-k3s.md#runner-image).
-Pin setup actions to the baked version, or drop them.
 `XDG_CACHE_HOME` alone hides the image's Chromium; keep `PLAYWRIGHT_BROWSERS_PATH`.
 
 ## Timeouts and reruns
