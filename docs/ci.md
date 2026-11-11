@@ -115,7 +115,7 @@ The lanes point caches at tmpfs; a job that overrides them writes to disk.
 The runner image bakes these; any other version downloads every run:
 
 - **Node:** 24.21.0
-- **Bun:** 1.4.2
+- **Bun:** 1.4.4
 - **Playwright:** 1.63.0, with Chromium
 - **Docker Compose**
 - **ffmpeg, bzip2, tmux**
