@@ -41,11 +41,9 @@ jobs:
             git fetch -q --no-tags --depth=1 origin "$BASE" || code
           git diff --quiet --no-renames "$BASE" HEAD -- . ':(exclude)docs/' ':(exclude)*.md' || code
       # Always-on checks here, such as the secret scan.
-      # The runner image bakes this Bun, so setup-bun downloads nothing.
+      # setup-bun reads packageManager; the runner image bakes that Bun, so it downloads nothing.
       - if: steps.scope.outputs.code
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.2
       - if: steps.scope.outputs.code
         run: bun install --frozen-lockfile
       - if: steps.scope.outputs.code

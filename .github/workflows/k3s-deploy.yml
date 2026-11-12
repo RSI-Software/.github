@@ -185,7 +185,7 @@ jobs:
       # The runner image bakes this version, so nothing downloads.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Build and push the images
         if: inputs.source == ''

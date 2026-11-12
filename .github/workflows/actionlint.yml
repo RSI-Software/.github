@@ -54,7 +54,7 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       # One rule per docs/ci.md checklist item. Each warns until its id joins FAIL.
       - name: Check CI policy
         if: ${{ !cancelled() }}
@@ -65,7 +65,6 @@ jobs:
           cat > "$RUNNER_TEMP/ci-policy.js" <<'JS'
           const fs = require("node:fs");
           const FAIL = new Set([]); // Phase 5 (.github#66): rule ids that fail instead of warn
-          const NODE = "24.21.0", BUN = "1.4.2"; // baked in the runner image: docs/ci.md#toolchain
           const K3S_MIN = "fdbf1c9e73dd98c410c7c66bbf9a41f1d6727cd9"; // minimum k3s-deploy pin: rsi#1198
           const SELF = process.env.GITHUB_REPOSITORY === "RSI-Software/.github";
           let findings = 0, failed = false;
@@ -175,11 +174,6 @@ jobs:
               const input = (v) => { try { return /^\$\{\{[\s\S]*\}\}$/.test(v) ? evaluate(v, { env }) ?? v : v; } catch { return v; } };
               for (const step of steps(job)) {
                 const uses = step.uses ?? "", w = Object.fromEntries(Object.entries(step.with ?? {}).map(([k, v]) => [k, input(v)]));
-                // 6. Setup actions pin the baked toolchain
-                if (uses.startsWith("actions/setup-node@") && w["node-version"] !== undefined && String(w["node-version"]) !== NODE)
-                  report("toolchain", wf, line, `${id}: setup-node ${w["node-version"]} is not the baked ${NODE}; it downloads every run`);
-                if (uses.startsWith("oven-sh/setup-bun@") && w["bun-version-file"] === undefined && String(w["bun-version"]) !== BUN)
-                  report("toolchain", wf, line, `${id}: setup-bun ${w["bun-version"] ?? "latest"} is not the baked ${BUN}; it downloads every run`);
                 // 7. Shallow checkout
                 if ((uses.startsWith("actions/checkout@") && String(w["fetch-depth"]) === "0") || /(^|\s)--unshallow(\s|$)/m.test(step.run ?? ""))
                   report("shallow", wf, line, `${id}: fetches full history; fetch only the base`);

@@ -66,7 +66,6 @@ It reads parsed workflows and **evaluates job `if:` and `cancel-in-progress`** u
 | `no-edited` | 5 | `edited` without a title read |
 | `main-cancel` | 5 | a `main` push cancels |
 | `skip-draft-stack` | 5 | a draft or lower layer starts a pod |
-| `toolchain` | 6 | setup-node or setup-bun not baked |
 | `shallow` | 7 | `fetch-depth: 0` or `--unshallow` |
 | `rerun` | 8 | the rerun caller misses a workflow |
 | `pr-title` | 9 | no shared PR title caller |
@@ -77,7 +76,7 @@ It reads parsed workflows and **evaluates job `if:` and `cancel-in-progress`** u
 
 - **Never fails** a caller, a crash included
 - **One rule fails** once its id joins `FAIL`
-- **Baked versions** and the minimum live in the script
+- **The k3s-deploy minimum** lives in the script
 
 A **written exception** is a comment anywhere in the workflow file:
 
