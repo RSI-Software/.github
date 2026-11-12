@@ -117,7 +117,8 @@ Any other version downloads every run.
 
 - **Not baked:** `gh`
 - **Every run installs it?** It belongs in the [image](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#runner-image)
-- **Pin setup actions** to the baked version, or drop them
+- **Pin setup actions** to baked, or drop them
+- `setup-bun` **reads `packageManager`**
 - **`rsi dev toolchain`** lists every pin that misses it
 
 `XDG_CACHE_HOME` alone hides the image's Chromium; keep `PLAYWRIGHT_BROWSERS_PATH`.
