@@ -23,6 +23,7 @@ Every workflow that starts a runner pod:
 10. **Workflow lint:** [actionlint](actionlint.md)
 11. **Stack lint:** [drift check](stack-lint.md)
 12. **Test workers:** the lane's [cap](#test-workers)
+13. **Bench input:** `runs-on` starts with `inputs.runner`; [Bench](#bench)
 
 Org variables never reach private repos on GitHub Free, so each repo sets its own.
 Split a job only when part of it needs a different lane.
@@ -176,6 +177,25 @@ So one cheap job runs on every ready PR and succeeds; never path-filter its `pul
 - **Workflow text in tests:** breaks on CI edits
 
 ## Snippets
+
+### Bench
+
+A `runner` dispatch input, first in every `runs-on`, lets [`ci:bench`](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#ci-bench) time the same jobs on each machine:
+
+```yaml
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Lane every job runs on, such as ci-exp-magma; empty keeps each job's own
+        type: string
+```
+
+```yaml
+    runs-on: ${{ inputs.runner || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+```
+
+- **Push and PR runs:** the input is empty
+- **A deploy on dispatch:** skips when `inputs.runner` is set
 
 ### Triggers and cancel
 
