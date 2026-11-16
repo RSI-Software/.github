@@ -305,7 +305,6 @@ Node BuildKit, no Docker daemon: [rsi-k3s BuildKit](https://github.com/RSI-Softw
 Each repo's `.github/workflows/ci.yml`:
 
 - **infra:** step skip in one `verify` job
-- **rsi-pr-agent:** step skip, `main` paths-ignore
 - **vone:** gate job, job skips
 - **web-tools:** one small job, baked toolchain
 
