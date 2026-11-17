@@ -154,11 +154,10 @@ Prefer job-level skips; step-level only inside the always-on job.
 
 ### Merges
 
-`ghb pr merge` lands a head only when a check succeeded.
+A head is green only when a check succeeded.
 
-- **All skipped:** refused; lower layers excepted
-- **No checks:** refused unless triggers exclude it
-- **`workflow_run` trigger:** that proof fails
+- **All skipped or no checks:** not green
+- **`workflow_run` check:** not proof
 - **Required checks:** unenforced on GitHub Free
 
 A rerun caller is a `workflow_run` trigger.

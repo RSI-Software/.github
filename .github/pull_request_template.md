@@ -4,7 +4,7 @@
 
 <!-- Visible inline, never in details. Source links/prose/check results are not evidence.
 Code-only: focused fenced code/diff. UI/CLI/TUI behavior: recording first; screenshot when video adds little.
-One app: window. Multiple apps: monitor. Upload with ghb image PATH...
+One app: window. Multiple apps: monitor. Upload with rsi pr upload FILE...
 Changes: matched Before/After, or one comparison clip/diff.
 Additions: show the new thing directly; no Before/After labels.
 Missing media: flag to user and in body; open the PR anyway.
