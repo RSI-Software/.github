@@ -1,1 +1,5 @@
 blank_issues_enabled: false
+contact_links:
+  - name: File it in Linear
+    url: https://linear.app/rsi-software
+    about: Work is tracked in Linear. GitHub issues are closed.
