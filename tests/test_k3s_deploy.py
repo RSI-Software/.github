@@ -187,7 +187,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(build[2:11], ["src", "--file", "deploy/Dockerfile", "--build-arg", "K3S_DEPLOY_REVISION=r5",
                                       "--build-arg", "COMMIT=x", "--build-arg", "MODE=prod"])
         self.assertIn(f"type=registry,ref={ref}:cache,registry.insecure=true", build)
-        self.assertIn(f"type=registry,ref={ref}:cache,mode=max,image-manifest=true,oci-mediatypes=true,"
+        self.assertIn(f"type=registry,ref={ref}:cache,mode=min,image-manifest=true,oci-mediatypes=true,"
                       "registry.insecure=true,ignore-error=true", build)
         self.assertIn(f"type=image,name={ref}:{SHA},push=true,registry.insecure=true", build)
         self.assertEqual(json.loads((self.dir / "k3s-built.jsonl").read_text()),
