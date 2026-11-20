@@ -4,8 +4,9 @@
 # the commit, which k3s-hq admits only if the source's last pass ran them.
 # No buildah, kubectl or kubeconfig. Callers and contract: docs/k3s-deploy.md.
 #
-# Layer cache: each repository keeps `<repository>:cache` in zot, max mode, on top of
-# the node-local buildkitd-main cache. Any ARC job can push it, as any branch could
+# Layer cache: each repository keeps `<repository>:cache` in zot, min mode, on top of
+# the node-local buildkitd-main cache. Max mode wrote ~20 GB/day of builder-stage layers to zot
+# (RSI-310); a local cache miss now rebuilds those stages. Any ARC job can push it, as any branch could
 # `sudo buildah` on the old path; what runs is the digest this job built and k3s-hq pins.
 name: k3s deploy
 
@@ -210,7 +211,7 @@ jobs:
               --file "$(jq -r '.dockerfile // "Dockerfile"' <<<"$img")" "${args[@]}" \
               --platform linux/amd64 --provenance=false \
               --cache-from "type=registry,ref=$ref:cache,registry.insecure=true" \
-              --cache-to "type=registry,ref=$ref:cache,mode=max,image-manifest=true,oci-mediatypes=true,registry.insecure=true,ignore-error=true" \
+              --cache-to "type=registry,ref=$ref:cache,mode=min,image-manifest=true,oci-mediatypes=true,registry.insecure=true,ignore-error=true" \
               --output "type=image,name=$ref:$SHA,push=true,registry.insecure=true" \
               --metadata-file "$RUNNER_TEMP/k3s-build.json"
             digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/k3s-build.json")
