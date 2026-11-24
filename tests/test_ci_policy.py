@@ -79,6 +79,21 @@ class CiPolicy(unittest.TestCase):
         self.assertNotIn("::error", out)
         self.assertEqual(set(re.findall(r"^::warning.*title=ci-policy ([\w-]+)::", out, re.M)), RULES, out)
 
+    def test_lane_without_its_route_fails(self):
+        route = "fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')"
+        job = lambda runs_on, **extra: {"runs-on": runs_on, "timeout-minutes": 5, "steps": [{"run": "true"}], **extra}
+        workflows = {**ALIGNED, "lanes.yml": {"on": {"schedule": [{"cron": "0 0 * * *"}]}, "jobs": {
+            "routed": job("${{ " + route + "['ci-heavy'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
+            "unrouted": job("${{ vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
+            "other-lane": job("${{ " + route + "['ci'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-docker' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
+            "ignores-hatch": job("${{ fromJSON(vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
+            "matrix": job("${{ matrix.runner }}", strategy={"matrix": {"include": [{"runner": "${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"}]}}),
+        }}}
+        code, out = policy(workflows)
+        self.assertEqual(code, 2, out)
+        self.assertEqual(re.findall(r"^::error.*title=ci-policy route::(\S+):", out, re.M),
+                         ["unrouted", "other-lane", "ignores-hatch", "matrix"], out)
+
 
 if __name__ == "__main__":
     unittest.main()

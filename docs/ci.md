@@ -190,7 +190,7 @@ A `runner` dispatch input, first in every `runs-on`, lets [`ci:bench`](https://g
 ```
 
 ```yaml
-    runs-on: ${{ inputs.runner || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner || fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
 ```
 
 - **Push and PR runs:** the input is empty
@@ -239,7 +239,7 @@ One step in the always-on job decides; `code=true` means run everything.
 
 ```yaml
   verify:
-    runs-on: ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       code: ${{ steps.scope.outputs.code }}
     steps:
@@ -287,11 +287,14 @@ Keep it in step with the scope excludes.
 ### `runs-on`
 
 ```yaml
-ci:        ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
-ci-docker: ${{ vars.RSI_CI_RUNNER == 'ci' && 'ci-docker' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
-ci-heavy:  ${{ vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
-ci-urgent: ${{ vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+ci:        ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+ci-docker: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci-docker'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-docker' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+ci-heavy:  ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci-heavy'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+ci-urgent: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')[vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER] || vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
 ```
+
+Each lane reads its **overflow route first**; the [policy](actionlint.md#policy) fails a `runs-on` that skips it.
+A repo overflows once rsi's collector lists it in `REPOS`.
 
 Detail: [rsi-k3s routing](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#routing).
 

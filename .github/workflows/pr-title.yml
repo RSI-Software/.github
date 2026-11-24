@@ -20,7 +20,7 @@ jobs:
     if: >-
       !github.event.pull_request.draft &&
       (github.event.action != 'edited' || github.event.changes.title.from != null)
-    runs-on: ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 2
     permissions: {}
     steps:
