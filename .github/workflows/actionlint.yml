@@ -17,7 +17,7 @@ jobs:
       !github.event.pull_request.draft &&
       (github.event.pull_request.stack == null ||
        github.event.pull_request.stack.position == github.event.pull_request.stack.size)
-    runs-on: ${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -64,7 +64,7 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/ci-policy.js" <<'JS'
           const fs = require("node:fs");
-          const FAIL = new Set([]); // Phase 5 (.github#66): rule ids that fail instead of warn
+          const FAIL = new Set(["route"]); // Phase 5 (.github#66): rule ids that fail instead of warn
           const K3S_MIN = "fdbf1c9e73dd98c410c7c66bbf9a41f1d6727cd9"; // minimum k3s-deploy pin: rsi#1198
           const SELF = process.env.GITHUB_REPOSITORY === "RSI-Software/.github";
           let findings = 0, failed = false;
@@ -139,6 +139,20 @@ jobs:
             return [].concat((key && job.strategy?.matrix?.[key]) || job["runs-on"] || []).map(String);
           }
           const hosted = (job) => labels(job)?.some((l) => /^(ubuntu|windows|macos)-/.test(l)) ?? false;
+          // Each runs-on expression that derives a lane from vars.RSI_CI_*, through one matrix key.
+          function derived(job) {
+            const on = job["runs-on"], key = /matrix\.([\w-]+)/.exec(JSON.stringify(on ?? ""))?.[1], m = job.strategy?.matrix;
+            return [on, ...(key ? [].concat(m?.[key] ?? [], (m?.include ?? []).map((i) => i[key])) : [])]
+              .filter((e) => typeof e === "string" && /vars\.RSI_CI_(RUNNER|URGENT)/.test(e));
+          }
+          // Overflow: on ci, a lane's RSI_CI_ROUTE entry wins; off ci, the escape hatch does.
+          function unrouted(expr) {
+            const at = (runner, route) => evaluate(expr, { vars: { ...vars, RSI_CI_RUNNER: runner, RSI_CI_ROUTE: route } });
+            try {
+              const route = JSON.stringify({ [at("ci", "{}")]: "overflow" });
+              return at("ci", route) !== "overflow" || at("ubuntu-latest", route) === "overflow";
+            } catch { return true; }
+          }
           const steps = (job) => job.steps ?? [];
           const install = /\b(bun|npm|pnpm|yarn)\s+(install|ci|i)\b/;
 
@@ -164,6 +178,7 @@ jobs:
               if (runner && hosted(job)) { if (!allowed(wf, "hosted")) report("hosted", wf, line, `${id}: runs-on ${runner} bills hosted minutes; add "# ci-policy: allow hosted <reason>"`); }
               else if (runner?.every((l) => /^ci(-docker|-docker-heavy|-heavy|-e2e|-urgent)?$/.test(l))) report("lane", wf, line, `${id}: runs-on ${runner} hard-codes a lane; derive it from vars.RSI_CI_RUNNER`);
               else if (runner && !allowed(wf, "host")) report("host", wf, line, `${id}: runs-on ${runner} is outside rsi-k3s; add "# ci-policy: allow host <reason>"`);
+              if (derived(job).some(unrouted)) report("route", wf, line, `${id}: runs-on skips its lane's overflow route; use the route-first shape: https://github.com/RSI-Software/.github/blob/main/docs/ci.md#runs-on`);
               // 4. timeout-minutes
               if (job["timeout-minutes"] === undefined) report("timeout", wf, line, `${id}: no timeout-minutes; a hang holds a slot 6 h, 3 times`);
               // 5. Draft and lower stack layers start no pod; title lint runs every layer

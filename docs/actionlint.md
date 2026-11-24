@@ -60,6 +60,7 @@ It reads parsed workflows and **evaluates job `if:` and `cancel-in-progress`** u
 | `runner-var` | 1 | `RSI_CI_RUNNER` is not `ci` |
 | `one-job` | 2 | two jobs install on one lane |
 | `lane` | 3 | `runs-on` hard-codes a lane |
+| `route` | 3 | **fails:** a lane skips its overflow route |
 | `hosted` | 3 | GitHub-hosted, no exception |
 | `host` | 3 | outside rsi-k3s, no exception |
 | `timeout` | 4 | a job lacks `timeout-minutes` |
@@ -74,8 +75,8 @@ It reads parsed workflows and **evaluates job `if:` and `cancel-in-progress`** u
 | `stack-lint` | 11 | lint config, no stack-lint step |
 | `k3s-pin` | | k3s-deploy below the minimum SHA |
 
-- **Never fails** a caller, a crash included
-- **One rule fails** once its id joins `FAIL`
+- **Fails** only on a rule in `FAIL`: `route`
+- **A crash** never fails a caller
 - **The k3s-deploy minimum** lives in the script
 
 A **written exception** is a comment anywhere in the workflow file:
