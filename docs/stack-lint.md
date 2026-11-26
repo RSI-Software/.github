@@ -22,7 +22,6 @@ Unsupported dynamic configs and unreadable files fail the job.
 **Every authoritative rule must match severity and contain its options.**
 Rule aliases, option order, diagnostic messages and additional local restrictions do not cause drift.
 Existing per-file overrides remain local: this checks the shared root rules, not baseline exemptions.
-Future authoritative rules are checked automatically.
 
 **Local verification:** `python3 -m unittest discover -s tests -v` runs the action's comparison script with passing and drifted copies.
 Set `RSI_STACK_CONFIG` to an authoritative JSON file to run the same controls against that file.

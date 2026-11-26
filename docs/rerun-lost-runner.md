@@ -61,7 +61,7 @@ Add one file per repository and name each watched workflow:
 name: Rerun lost runners
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [CI, PR title, actionlint]
     types: [completed]
 permissions:
   actions: write
