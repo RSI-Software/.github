@@ -4,22 +4,24 @@
 
 ## Rules
 
-- **Pin:** v1.7.12, sha256-verified
-- **shellcheck:** v0.11.0, on each `run:` script
-- **SC2016:** off; single quotes are intended
-- **Runner:** `RSI_CI_RUNNER`, else `ubuntu-latest`
-- **Scope:** `.github/workflows/` of the caller
-- **Skips:** drafts and lower native-stack layers
+- **Pinned, sha256-verified** actionlint and shellcheck
+- **shellcheck** lints each **`run:` script**
+- **SC2016 off**, as single quotes are intended
+- Runs on **`RSI_CI_RUNNER`**, else `ubuntu-latest`
+- Lints the caller's **`.github/workflows/`**
+- **Skips drafts** and lower native-stack layers
+
+The pins live in [`actionlint.yml`](../.github/workflows/actionlint.yml).
 
 ## Caller
 
 Each repository calls it from its own file, never a job in `ci.yml`.
 
-- **Path:** `.github/workflows/actionlint.yml`
-- **Trigger:** workflow file changes only
-- **`ready_for_review`:** runs a draft-skipped lint
-- **Required check:** never
-- **Branch:** the repository's default
+- Lives at **`.github/workflows/actionlint.yml`**
+- Triggers on **workflow file changes** only
+- **`ready_for_review`** runs a draft-skipped lint
+- **Never** a **required check**
+- Pushes on the **default branch**
 
 ```yaml
 name: actionlint
@@ -60,7 +62,7 @@ It reads parsed workflows and **evaluates job `if:` and `cancel-in-progress`** u
 | `runner-var` | 1 | `RSI_CI_RUNNER` is not `ci` |
 | `one-job` | 2 | two jobs install on one lane |
 | `lane` | 3 | `runs-on` hard-codes a lane |
-| `route` | 3 | **fails:** a lane skips its overflow route |
+| `route` | 3 | a lane skips its overflow route |
 | `hosted` | 3 | GitHub-hosted, no exception |
 | `host` | 3 | outside rsi-k3s, no exception |
 | `timeout` | 4 | a job lacks `timeout-minutes` |
@@ -75,9 +77,9 @@ It reads parsed workflows and **evaluates job `if:` and `cancel-in-progress`** u
 | `stack-lint` | 11 | lint config, no stack-lint step |
 | `k3s-pin` | | k3s-deploy below the minimum SHA |
 
-- **Fails** only on a rule in `FAIL`: `route`
+- **Fails** only on a rule in `FAIL`
 - **A crash** never fails a caller
-- **The k3s-deploy minimum** lives in the script
+- The **script** holds **`FAIL`** and the k3s pin floor
 
 A **written exception** is a comment anywhere in the workflow file:
 

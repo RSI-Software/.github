@@ -14,47 +14,43 @@ An evicted, drained or hard-killed runner pod is lost; a failing test is not.
 | **Drained or default-grace pod delete** | `failure` | "The operation was canceled." |
 | **Timeout** | `cancelled` | "exceeded the maximum execution time" |
 
-Default-grace `kubectl delete pod <runner>` reproduced the drained signal in [infra run 38125850620](https://github.com/RSI-Software/infra/actions/runs/38125850620/job/114429940060): step `cancelled`, job `failure`.
-The match uses the job conclusion; a `cancelled` job with only the bare cancellation annotation is not retried.
+A **default-grace** `kubectl delete pod <runner>` gives the **drained signal**: step `cancelled`, job `failure`.
+The match uses the **job conclusion**; a `cancelled` job with only the bare cancellation annotation is **not retried**.
 
 ### Not retried
 
-- **Real failure:** the run stays red
-- **Deliberate cancel:** a user or newer run
-- **Fail-fast sibling:** reruns with its run
-- **Consecutive losses:** lost/shutdown twice
+- A **real failure**: the run stays red
+- A **deliberate cancel** by a user or newer run
+- A **fail-fast sibling**; it reruns with its run
+- A job **lost or shut down twice** in a row
 
 The guard compares the job's last two actual executions, ignoring carried-over workflow attempts.
 Lost and shutdown signals count together; timeout and drain signals do not trigger this guard.
 
 ### Rerun
 
-- **Cap:** 3 runs per job
-- **Delay:** 30 seconds before each rerun
-- **Summary:** each decision, in the step summary
+- At most **3 runs** per job
+- **30 seconds** before each rerun
+- The **step summary** lists each decision
 
 ### Mixed runs
 
 GitHub reruns one job per request, only once the run finishes.
 
-1. Failed run, all lost: one `--failed` rerun
-2. Otherwise: one lost job per attempt
-3. Carried-over job: judged where it last ran
+1. A failed run, **all lost**, gets one **`--failed` rerun**
+2. Otherwise, **one lost job** per attempt
+3. A **carried-over job** is judged where it last ran
 
 `--failed` would also rerun a deliberate cancel.
 
 ## Why
 
-- **Pressure kills:** CI yields; a rerun is safe
-- **Timeout:** a hung test or a hard-killed pod
-- **OOM:** repeated lost/shutdown stops at 2
-- **Cap:** other retriable signals stop at 3
-- **Runner:** GitHub-hosted, a minute per call
-- **Real failures:** a rerun never hides them
-
-A single node loss still gets a retry.
-Repeated loss can instead mean a deterministic memory-limit kill: [promptletariat run 38997884442](https://github.com/RSI-Software/promptletariat/actions/runs/38997884442) lost `verify` on all three attempts at the 8 GiB `ci` limit.
-Timeouts and drained pods retain their existing retries because their annotations do not identify this repeated lost/shutdown pattern.
+- **Pressure kills** a runner first; a rerun is safe
+- A **timeout** means a hung test or a hard-killed pod
+- **Repeated loss** may be an **OOM kill**: stops at 2
+- **Other retriable signals** stop at **3**
+- Runs **GitHub-hosted**, a minute per call
+- A rerun **never hides** a real failure
 
 ## Caller
 

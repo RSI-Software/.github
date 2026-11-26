@@ -1,7 +1,7 @@
 # CI
 
 How to set up a workflow on rsi-k3s runners.
-Lane sizes and the reasons behind them live in infra: [`capacity.yaml`](https://github.com/RSI-Software/rsi/blob/main/infra/managed/rsi-k3s/capacity.yaml), [decisions](https://github.com/RSI-Software/rsi/blob/main/infra/docs/decisions.md).
+Lane sizes, slots, and memory live in [`capacity.yaml`][capacity], with the reasons beside each lane.
 Live cost per job: [ci-ledger](https://k3s.rsi.nz).
 
 ## Checklist
@@ -11,19 +11,19 @@ It meets this list beside the [actionlint](actionlint.md), [PR title](pr-title.m
 
 Every workflow that starts a runner pod:
 
-1. **Repo variable:** `RSI_CI_RUNNER=ci`
-2. **One job:** one checkout, one install
-3. **Lane:** smallest that fits; [Lanes](#lanes)
-4. **`timeout-minutes`:** about 3× the job's p50
-5. **Triggers, cancel, skips:** [Snippets](#snippets)
-6. **Toolchain:** baked versions; [here](#toolchain)
-7. **Checkout:** shallow; fetch only the base
-8. **Rerun caller:** [rerun](rerun-lost-runner.md)
-9. **Title lint:** [PR title](pr-title.md), not CI
-10. **Workflow lint:** [actionlint](actionlint.md)
-11. **Stack lint:** [drift check](stack-lint.md)
-12. **Test workers:** the lane's [cap](#test-workers)
-13. **Bench input:** `runs-on` starts with `inputs.runner`; [Bench](#bench)
+1. Repo variable **`RSI_CI_RUNNER=ci`**
+2. **One job**, with one checkout and one install
+3. The **smallest [lane](#lanes)** that fits
+4. **`timeout-minutes`** about **3× the job's p50**
+5. Triggers, cancel, skips from [**snippets**](#snippets)
+6. **Baked [toolchain](#toolchain)** versions
+7. **Shallow checkout**; fetch only the base
+8. A [**rerun caller**](rerun-lost-runner.md)
+9. Title lint by [**PR title**](pr-title.md), not CI
+10. Workflow lint by [**actionlint**](actionlint.md)
+11. The stack lint [**drift check**](stack-lint.md)
+12. Test workers at the lane's [**cap**](#test-workers)
+13. `runs-on` **starts with** [`inputs.runner`](#bench)
 
 Org variables never reach private repos on GitHub Free, so each repo sets its own.
 Split a job only when part of it needs a different lane.
@@ -31,47 +31,45 @@ The shared actionlint workflow **warns on drift** from this list: [policy](actio
 
 ## Lanes
 
-| Lane | Use when | Slots | Docker |
-| --- | --- | --- | --- |
-| `ci` | default | 24 | no |
-| `ci-docker` | the job runs `docker` | 4 | yes |
-| `ci-docker-heavy` | its Docker store passes 3 GiB | 2 | yes |
-| `ci-heavy` | working set over 4 GiB | 5 | no |
-| `ci-e2e` | a browser suite against a Docker stack | 3 | yes |
-| `ci-urgent` | the job fixes or unblocks CI | 2 | no |
+| Lane | Use when | Docker |
+| --- | --- | --- |
+| `ci` | default | no |
+| `ci-docker` | the job runs `docker` | yes |
+| `ci-docker-heavy` | it outgrows `ci-docker`'s store | yes |
+| `ci-heavy` | working set over 4 GiB | no |
+| `ci-e2e` | a browser suite against a Docker stack | yes |
+| `ci-urgent` | the job fixes or unblocks CI | no |
 
-Start on `ci`; move a job only on evidence from its ledger page.
+**Start on `ci`**; move a job only on **evidence** from its ledger page.
 
-- **RAM p90 over 4 GiB:** `ci-heavy`
-- **Killed at the 8 GiB limit:** fix the leak first
-- **Needs a Docker daemon:** `ci-docker`
-- **Browsers and Docker:** `ci-e2e`, the browser job alone
-- **Only builds an image:** `ci` and node BuildKit
+- RAM p90 over 4 GiB: **`ci-heavy`**
+- Killed at `ci`'s limit: **fix the leak first**
+- Needs a Docker daemon: **`ci-docker`**
+- Browsers and Docker: **`ci-e2e`**, that job alone
+- Only builds an image: **`ci` and node BuildKit**
 
-Every lane but `ci` has few slots: a long job there queues every other repo.
+Every lane but `ci` has **few slots**: a long job there **queues every other repo**.
 Keep lint, typecheck, and title checks out of heavy jobs.
 
 ## Memory
 
 Pods have no swap, so a job over its limit dies.
 
-- **Counted:** process RAM and tmpfs pages
-- **tmpfs:** `_work`, `/tmp`, `~/.local`
-- **So:** checkout and `node_modules` cost RAM
-- **`ci`:** 2 GiB request, 8 GiB limit
-- **`ci-heavy`:** 6 GiB request, 18 GiB limit
-- **`_work` cap:** 3 GiB `ci`, 8 GiB `ci-heavy`
+- **Process RAM and tmpfs pages** both count
+- **`_work`, `/tmp`, `~/.local`** are tmpfs
+- So **checkout and `node_modules` cost RAM**
+- Lane **limits and `_work` caps**: [capacity][capacity]
 
 A killed pod reports "The self-hosted runner lost communication with the server", never an out-of-memory error.
 Fix it at the cause:
 
-- **Test workers:** the lane's [cap](#test-workers)
-- **Engines per test:** close databases, servers
-- **`node_modules`:** link or reuse, never copy
+- **Cap [test workers](#test-workers)** per lane
+- **Close databases and servers** each test opens
+- **Link or reuse `node_modules`**, never copy
 
 ## Test workers
 
-Runners see the **whole node**: `nproc` prints 16 to 18 in a pod that reserves half a core.
+Runners see the **whole node**: `nproc` prints the node's cores, not the pod's.
 Test runners size their pool from it, so **set the cap**.
 
 | Lane | Cap |
@@ -82,7 +80,7 @@ Test runners size their pool from it, so **set the cap**.
 
 - **RAM limit** sets the cap
 - A worker costs **up to 1.5 GiB**
-- **No CPU limit**: extra workers take other pods' cores
+- **No CPU limit**, so extra workers **take others' cores**
 - **Child processes** share the cap
 - **Suites at once** split it
 
@@ -94,7 +92,7 @@ Test runners size their pool from it, so **set the cap**.
 
 ## Disk
 
-Runner nodes use consumer SSDs ([rsi#640](https://github.com/RSI-Software/rsi/issues/640)).
+Runner nodes use **consumer SSDs**.
 The lanes point caches at tmpfs; a job that overrides them writes to disk.
 
 | Path | Where |
@@ -105,19 +103,19 @@ The lanes point caches at tmpfs; a job that overrides them writes to disk.
 | Node toolcache, `~/.bun` | disk |
 | dind `/var/lib/docker` | RAM |
 
-- **Never override:** Go and XDG cache paths
-- **`no-cache: true`:** forces a download
-- **Unbaked versions:** download to disk every run
-- **`actions/cache`:** costs RAM and time
-- **Artifacts:** upload on `main`, only if read
+- **Never override** Go and XDG cache paths
+- **`no-cache: true` forces** a download
+- **Unbaked versions download** to disk every run
+- **`actions/cache` costs** RAM and time
+- **Upload artifacts** on `main`, only if read
 
 ## Toolchain
 
-The runner image's [`Dockerfile`](https://github.com/RSI-Software/rsi/blob/main/infra/managed/rsi-k3s/runner-image/Dockerfile) `ARG`s pin what it bakes: Node, Bun, Playwright with Chromium, Docker Compose, ffmpeg, bzip2, tmux.
-Any other version downloads every run.
+The runner image's [`Dockerfile`](https://github.com/RSI-Software/rsi/blob/main/infra/managed/rsi-k3s/runner-image/Dockerfile) **pins what it bakes**.
+Any other version **downloads every run**.
 
-- **Not baked:** `gh`
-- **Every run installs it?** It belongs in the [image](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#runner-image)
+- `gh` is **not baked**
+- A tool **every run installs** belongs in the [image]
 - **Pin setup actions** to baked, or drop them
 - `setup-bun` **reads `packageManager`**
 - **`rsi dev toolchain`** lists every pin that misses it
@@ -128,9 +126,9 @@ Any other version downloads every run.
 
 The [rerun caller](rerun-lost-runner.md) retries lost runners and timeouts, up to 3 runs.
 
-- **No timeout:** a hang holds a slot 6 h, 3 times
-- **Deterministic failure:** reruns repeat it
-- **Flaky test:** fix or quarantine it
+- With **no timeout**, a hang holds a slot **6 h, 3 times**
+- A **deterministic failure** repeats on rerun
+- **Fix or quarantine** a flaky test
 
 ## Skips
 
@@ -146,9 +144,9 @@ Skip work a change cannot affect, but keep one check that succeeds.
 | Docs only, several jobs | gate job, job `if:` on scope | gate only |
 | Docs only, `main` push | `push.paths-ignore` | none |
 
-- **Job `if:` false or filtered:** no pod
-- **Step `if:` false:** pod starts anyway
-- **Cancel:** pod freed when the run stops
+- A **false or filtered job `if:`** starts **no pod**
+- A **false step `if:`** still **starts the pod**
+- A **cancel frees** the pod when the run stops
 
 Prefer job-level skips; step-level only inside the always-on job.
 
@@ -156,24 +154,24 @@ Prefer job-level skips; step-level only inside the always-on job.
 
 A head is green only when a check succeeded.
 
-- **All skipped or no checks:** not green
-- **`workflow_run` check:** not proof
-- **Required checks:** unenforced on GitHub Free
+- **All skipped**, or no checks, is **not green**
+- A **`workflow_run` check** is **not proof**
+- **Required checks** are **unenforced** on GitHub Free
 
 A rerun caller is a `workflow_run` trigger.
 So one cheap job runs on every ready PR and succeeds; never path-filter its `pull_request` trigger.
 
 ## Footguns
 
-- **Cancel on `main`:** drops deploys mid-run
-- **Any pushed branch:** runs code on our runners
-- **Secrets:** reach any pushed branch
-- **Deploy re-running CI:** gate on CI status
-- **Hosted runners:** bill private repos
-- **Rerun callers:** run hosted, so bill too
-- **Manual ARC patch:** next lane deploy reverts it
-- **Disabled workflow:** re-enabling restores cost
-- **Workflow text in tests:** breaks on CI edits
+- **Cancel on `main`** drops deploys mid-run
+- **Any pushed branch** runs code on our runners
+- **Secrets reach** any pushed branch
+- A deploy **gates on CI status**, never reruns CI
+- **Hosted runners bill** private repos
+- **Rerun callers** run hosted, so **bill too**
+- The next lane deploy **reverts a manual ARC patch**
+- **Re-enabling** a disabled workflow **restores cost**
+- **Workflow text in tests** breaks on CI edits
 
 ## Snippets
 
@@ -193,8 +191,8 @@ A `runner` dispatch input, first in every `runs-on`, lets [`ci:bench`](https://g
     runs-on: ${{ inputs.runner || fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
 ```
 
-- **Push and PR runs:** the input is empty
-- **A deploy on dispatch:** skips when `inputs.runner` is set
+- **Push and PR runs** leave the input **empty**
+- A **dispatch deploy skips** given `inputs.runner`
 
 ### Triggers and cancel
 
@@ -210,10 +208,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 ```
 
-- **`ready_for_review`:** reruns draft-skipped jobs
-- **No `edited`:** title lint runs elsewhere
-- **Workflow in group:** no cross-workflow cancels
-- **`main`:** never cancels
+- **`ready_for_review` reruns** draft-skipped jobs
+- **No `edited`**, as title lint runs elsewhere
+- The **workflow name** blocks **cross-workflow cancels**
+- A **`main` push** never **cancels**
 
 A job that reads the title keeps `edited`, unfiltered.
 A body-edit skip cancels a real run and its skipped check hides an earlier failure.
@@ -229,9 +227,9 @@ A body-edit skip cancels a real run and its skipped check hides an earlier failu
        github.event.pull_request.stack.position == github.event.pull_request.stack.size)
 ```
 
-- **Stack:** the top layer runs for every layer
-- **Push, dispatch:** no `pull_request`, so they run
-- **Existing `if:`:** AND it, in parentheses
+- The **top stack layer** runs for every layer
+- **Push and dispatch** carry no `pull_request`, so **run**
+- **AND an existing `if:`**, in parentheses
 
 ### Docs-only scope
 
@@ -270,9 +268,9 @@ A job on another lane skips without a pod:
     if: needs.verify.outputs.code == 'true'
 ```
 
-- **Tested docs:** code; narrow the exclude
-- **Shipped prompts:** code too
-- **Moved base:** over-includes; fails open
+- **Tested docs are code**; narrow the exclude
+- **Shipped prompts** are **code** too
+- A **moved base over-includes**; it fails open
 
 ### `main` push
 
@@ -300,13 +298,8 @@ Detail: [rsi-k3s routing](https://github.com/RSI-Software/rsi/blob/main/infra/do
 
 ### Image builds
 
-Node BuildKit, no Docker daemon: [rsi-k3s BuildKit](https://github.com/RSI-Software/rsi/blob/main/infra/docs/runbooks/rsi-k3s.md#buildkit).
+Node BuildKit, no Docker daemon: [rsi-k3s BuildKit](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#buildkit).
 
-## In use
+[capacity]: https://github.com/RSI-Software/rsi/blob/main/infra/managed/rsi-k3s/capacity.yaml
 
-Each repo's `.github/workflows/ci.yml`:
-
-- **infra:** step skip in one `verify` job
-- **vone:** gate job, job skips
-- **web-tools:** one small job, baked toolchain
-
+[image]: https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#runner-image
