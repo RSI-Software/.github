@@ -64,7 +64,7 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/ci-policy.js" <<'JS'
           const fs = require("node:fs");
-          const FAIL = new Set(["route"]); // Phase 5 (.github#66): rule ids that fail instead of warn
+          const FAIL = new Set(["route"]); // rule ids that fail instead of warn
           const K3S_MIN = "fdbf1c9e73dd98c410c7c66bbf9a41f1d6727cd9"; // minimum k3s-deploy pin: rsi#1198
           const SELF = process.env.GITHUB_REPOSITORY === "RSI-Software/.github";
           let findings = 0, failed = false;
