@@ -7,7 +7,7 @@
 - **Pinned, sha256-verified** actionlint and shellcheck
 - **shellcheck** lints each **`run:` script**
 - **SC2016 off**, as single quotes are intended
-- Runs on **`RSI_CI_RUNNER`**, else `ubuntu-latest`
+- Runs on the **`ci` [lane](ci.md#runs-on)**
 - Lints the caller's **`.github/workflows/`**
 - **Skips drafts** and lower native-stack layers
 

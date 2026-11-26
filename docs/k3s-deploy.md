@@ -38,7 +38,6 @@ k3s-hq then pins, migrates, rolls out, checks and undoes: [Releases](https://git
 - The caller takes **`workflow_dispatch`**
 - **Pin a full SHA**; k3s-hq admits SHA or main
 - **Other images by digest**, or k3s-hq refuses
-- **Old pins keep** their buildah, kubectl path
 
 ## Promote
 

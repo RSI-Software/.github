@@ -2,7 +2,7 @@
 
 How to set up a workflow on rsi-k3s runners.
 Lane sizes, slots, and memory live in [`capacity.yaml`][capacity], with the reasons beside each lane.
-Live cost per job: [ci-ledger](https://k3s.rsi.nz).
+Live cost per job: HQ's [Jobs](https://hq.rsi.nz/jobs).
 
 ## Checklist
 
@@ -40,7 +40,7 @@ The shared actionlint workflow **warns on drift** from this list: [policy](actio
 | `ci-e2e` | a browser suite against a Docker stack | yes |
 | `ci-urgent` | the job fixes or unblocks CI | no |
 
-**Start on `ci`**; move a job only on **evidence** from its ledger page.
+**Start on `ci`**; move a job only on **evidence** from its HQ job page.
 
 - RAM p90 over 4 GiB: **`ci-heavy`**
 - Killed at `ci`'s limit: **fix the leak first**
@@ -237,7 +237,7 @@ One step in the always-on job decides; `code=true` means run everything.
 
 ```yaml
   verify:
-    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner || fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       code: ${{ steps.scope.outputs.code }}
     steps:
@@ -292,7 +292,7 @@ ci-urgent: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')
 ```
 
 Each lane reads its **overflow route first**; the [policy](actionlint.md#policy) fails a `runs-on` that skips it.
-A repo overflows once rsi's collector lists it in `REPOS`.
+A repo overflows once k3s-hq's collector lists it in `REPOS`.
 
 Detail: [rsi-k3s routing](https://github.com/RSI-Software/rsi/blob/main/infra/docs/rsi-k3s.md#routing).
 
