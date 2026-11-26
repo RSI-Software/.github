@@ -7,21 +7,21 @@ One `github-script` step: no checkout, no install.
 
 `type(scope)!: subject`; scope and `!` are optional.
 
-- **Types:** build, ci, chore, docs, feat, fix
-- **More types:** perf, refactor, revert, test
-- **Scopes:** the caller's `scopes` input, if set
-- **Subject:** no trailing period or space
-- **Length:** `<title> (#N)` at most 72 characters
+- Types: **build, ci, chore, docs, feat, fix**
+- More types: **perf, refactor, revert, test**
+- Scopes: the caller's **`scopes` input**, if set
+- Subject: **no trailing period** or space
+- Length: `<title> (#N)` at most **72 characters**
 
 A set `scopes` input makes a scope required.
 `!` marks a breaking change; no body footer is linted.
 
 ## Runs
 
-- **Runner:** `RSI_CI_RUNNER`, else `ubuntu-latest`
-- **Drafts:** skipped, no runner
-- **Edits:** run only when the title changed
-- **Stacks:** every layer; it is cheap
+- Runs on **`RSI_CI_RUNNER`**, else `ubuntu-latest`
+- **Skips drafts**, with no runner
+- **Edits run** only when the **title changed**
+- Runs on **every stack layer**; it is cheap
 
 ## Caller
 

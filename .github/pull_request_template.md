@@ -1,35 +1,11 @@
-<!-- 1-2 sentences: what changed and why. -->
+<!-- Result first: what changed and why, in 1-2 sentences. -->
 
-## Evidence
+## Done when
 
-<!-- Visible inline, never in details. Source links/prose/check results are not evidence.
-Code-only: focused fenced code/diff. UI/CLI/TUI behavior: recording first; screenshot when video adds little.
-One app: window. Multiple apps: monitor. Upload with rsi pr upload FILE...
-Changes: matched Before/After, or one comparison clip/diff.
-Additions: show the new thing directly; no Before/After labels.
-Missing media: flag to user and in body; open the PR anyway.
-Code-change model:
-```diff
-- retries: 0
-+ retries: 3
-```
-Addition model:
-```ts
-export const retries = 3;
-```
-UI model: click Save; draft disappears / same action; draft survives. -->
+<!-- Each issue item, verbatim, with proof of its kind as the value. -->
+<!-- A change shows its after beside its before; media via `rsi pr upload <file...>`. -->
+<!-- Checks as `command → exit N`. -->
 
-## Verification
+- [ ] <!-- item -->: <!-- before → after -->
 
-<!-- Text checkboxes: commands/results and untested limits, never an evidence table. -->
-
-## Tasks
-
-- [ ] **Task:** <!-- One reviewable task. -->
-
-## Close conditions
-
-- [ ] **Condition:** <!-- One observable result. -->
-
-<!-- Closes: full fix. Refs: partial. Part-of: parent slice. -->
-Closes #
+<!-- Fixes RSI-N: full fix. Part of RSI-N: partial. -->
