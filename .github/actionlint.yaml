@@ -1,3 +1,4 @@
 # ARC scale sets: https://github.com/RSI-Software/.github/blob/main/docs/ci.md#lanes
+# Blacksmith: rerun-lost-runner.yml, which must start with rsi-k3s down.
 self-hosted-runner:
-  labels: [ci]
+  labels: [ci, blacksmith-2vcpu-ubuntu-2404]

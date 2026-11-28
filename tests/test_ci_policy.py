@@ -83,11 +83,11 @@ class CiPolicy(unittest.TestCase):
         route = "fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')"
         job = lambda runs_on, **extra: {"runs-on": runs_on, "timeout-minutes": 5, "steps": [{"run": "true"}], **extra}
         workflows = {**ALIGNED, "lanes.yml": {"on": {"schedule": [{"cron": "0 0 * * *"}]}, "jobs": {
-            "routed": job("${{ " + route + "['ci-heavy'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
-            "unrouted": job("${{ vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
-            "other-lane": job("${{ " + route + "['ci'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-docker' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
-            "ignores-hatch": job("${{ fromJSON(vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"),
-            "matrix": job("${{ matrix.runner }}", strategy={"matrix": {"include": [{"runner": "${{ vars.RSI_CI_RUNNER || 'ubuntu-latest' }}"}]}}),
+            "routed": job("${{ " + route + "['ci-heavy'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}"),
+            "unrouted": job("${{ vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}"),
+            "other-lane": job("${{ " + route + "['ci'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-docker' || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}"),
+            "ignores-hatch": job("${{ fromJSON(vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}"),
+            "matrix": job("${{ matrix.runner }}", strategy={"matrix": {"include": [{"runner": "${{ vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}"}]}}),
         }}}
         code, out = policy(workflows)
         self.assertEqual(code, 2, out)

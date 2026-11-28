@@ -84,7 +84,7 @@ It reads parsed workflows and **evaluates job `if:` and `cancel-in-progress`** u
 A **written exception** is a comment anywhere in the workflow file:
 
 ```yaml
-# ci-policy: allow hosted reruns must start when every self-hosted runner is lost
+# ci-policy: allow host reruns must start when every rsi-k3s runner is lost
 ```
 
 Only `hosted` and `host` take one.

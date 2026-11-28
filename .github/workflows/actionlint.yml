@@ -17,7 +17,7 @@ jobs:
       !github.event.pull_request.draft &&
       (github.event.pull_request.stack == null ||
        github.event.pull_request.stack.position == github.event.pull_request.stack.size)
-    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -150,14 +150,14 @@ jobs:
             const at = (runner, route) => evaluate(expr, { vars: { ...vars, RSI_CI_RUNNER: runner, RSI_CI_ROUTE: route } });
             try {
               const route = JSON.stringify({ [at("ci", "{}")]: "overflow" });
-              return at("ci", route) !== "overflow" || at("ubuntu-latest", route) === "overflow";
+              return at("ci", route) !== "overflow" || at("blacksmith-4vcpu-ubuntu-2404", route) === "overflow";
             } catch { return true; }
           }
           const steps = (job) => job.steps ?? [];
           const install = /\b(bun|npm|pnpm|yarn)\s+(install|ci|i)\b/;
 
           // 1. Repo variable
-          if (process.env.RSI_CI_RUNNER !== "ci") report("runner-var", null, 0, `repository variable RSI_CI_RUNNER is "${process.env.RSI_CI_RUNNER ?? ""}", not "ci": jobs run hosted`);
+          if (process.env.RSI_CI_RUNNER !== "ci") report("runner-var", null, 0, `repository variable RSI_CI_RUNNER is "${process.env.RSI_CI_RUNNER ?? ""}", not "ci": jobs skip rsi-k3s`);
 
           for (const wf of workflows) {
             const pull = wf.on.pull_request !== undefined || wf.on.pull_request_target !== undefined;

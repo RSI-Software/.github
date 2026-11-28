@@ -12,8 +12,8 @@ permissions: {}
 jobs:
   rerun:
     if: contains(fromJSON('["failure", "cancelled"]'), github.event.workflow_run.conclusion)
-    # ci-policy: allow hosted reruns must start when every self-hosted runner is lost
-    runs-on: ubuntu-latest
+    # ci-policy: allow host reruns must start when every rsi-k3s runner is lost
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       actions: write
