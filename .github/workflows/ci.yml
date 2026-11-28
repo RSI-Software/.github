@@ -19,7 +19,7 @@ jobs:
       !github.event.pull_request.draft &&
       (github.event.pull_request.stack == null ||
        github.event.pull_request.stack.position == github.event.pull_request.stack.size)
-    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5

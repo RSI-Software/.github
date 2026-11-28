@@ -168,7 +168,7 @@ So one cheap job runs on every ready PR and succeeds; never path-filter its `pul
 - **Secrets reach** any pushed branch
 - A deploy **gates on CI status**, never reruns CI
 - **Hosted runners bill** private repos
-- **Rerun callers** run hosted, so **bill too**
+- **Rerun callers** run on Blacksmith, so **bill too**
 - The next lane deploy **reverts a manual ARC patch**
 - **Re-enabling** a disabled workflow **restores cost**
 - **Workflow text in tests** breaks on CI edits
@@ -188,7 +188,7 @@ A `runner` dispatch input, first in every `runs-on`, lets [`ci:bench`](https://g
 ```
 
 ```yaml
-    runs-on: ${{ inputs.runner || fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner || fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
 ```
 
 - **Push and PR runs** leave the input **empty**
@@ -237,7 +237,7 @@ One step in the always-on job decides; `code=true` means run everything.
 
 ```yaml
   verify:
-    runs-on: ${{ inputs.runner || fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner || fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     outputs:
       code: ${{ steps.scope.outputs.code }}
     steps:
@@ -285,10 +285,10 @@ Keep it in step with the scope excludes.
 ### `runs-on`
 
 ```yaml
-ci:        ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
-ci-docker: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci-docker'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-docker' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
-ci-heavy:  ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci-heavy'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
-ci-urgent: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')[vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER] || vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER || 'ubuntu-latest' }}
+ci:        ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci'] || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+ci-docker: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci-docker'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-docker' || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+ci-heavy:  ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')['ci-heavy'] || vars.RSI_CI_RUNNER == 'ci' && 'ci-heavy' || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+ci-urgent: ${{ fromJSON(vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_ROUTE || '{}')[vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER] || vars.RSI_CI_RUNNER == 'ci' && vars.RSI_CI_URGENT || vars.RSI_CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
 ```
 
 Each lane reads its **overflow route first**; the [policy](actionlint.md#policy) fails a `runs-on` that skips it.

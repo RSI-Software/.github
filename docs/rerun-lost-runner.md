@@ -49,7 +49,7 @@ GitHub reruns one job per request, only once the run finishes.
 - A **timeout** means a hung test or a hard-killed pod
 - **Repeated loss** may be an **OOM kill**: stops at 2
 - **Other retriable signals** stop at **3**
-- Runs **GitHub-hosted**, a minute per call
+- Runs on **Blacksmith**, a minute per call
 - A rerun **never hides** a real failure
 
 ## Caller
